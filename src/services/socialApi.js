@@ -62,12 +62,20 @@ function directSetupError() {
   )
 }
 
+function storiesSetupError() {
+  return new Error('Tabelas de stories nao encontradas. Rode novamente supabase/schema.sql para ativar stories.')
+}
+
 function isMissingDirectRelation(error) {
   return (
     isMissingRelationError(error, 'direct_threads') ||
     isMissingRelationError(error, 'direct_thread_participants') ||
     isMissingRelationError(error, 'direct_messages')
   )
+}
+
+function isMissingStoriesRelation(error) {
+  return isMissingRelationError(error, 'stories') || isMissingRelationError(error, 'story_views')
 }
 
 const FEED_POST_SELECT = `
@@ -232,6 +240,55 @@ export function subscribeDirectInbox({ userId, onChange, onError }) {
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         onError?.(new Error('Falha ao sincronizar direct em tempo real.'))
+      }
+    })
+
+  return () => {
+    void client.removeChannel(channel)
+  }
+}
+
+export function subscribeStories({ userId, onChange, onError }) {
+  const client = requireSupabase()
+
+  if (!userId) {
+    return () => {}
+  }
+
+  const channel = client
+    .channel(`stories-${userId}-${crypto.randomUUID()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'stories',
+      },
+      (payload) => {
+        onChange?.({
+          type: 'story_insert',
+          row: payload.new || null,
+        })
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'story_views',
+        filter: `user_id=eq.${userId}`,
+      },
+      (payload) => {
+        onChange?.({
+          type: 'story_view',
+          row: payload.new || null,
+        })
+      },
+    )
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        onError?.(new Error('Falha ao sincronizar stories em tempo real.'))
       }
     })
 
@@ -581,6 +638,149 @@ function toIsoOrMin(value) {
   return value || '1970-01-01T00:00:00.000Z'
 }
 
+function mapStory(row, viewedSet = new Set(), viewerUserId = '') {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    user: {
+      id: row.profiles?.id || row.user_id,
+      name: safeProfileName(row.profiles),
+      handle: safeHandle(row.profiles),
+      avatarUrl: safeAvatar(row.profiles),
+    },
+    text: row.content || '',
+    track: row.track_title && row.track_artist ? { title: row.track_title, artist: row.track_artist } : null,
+    media: row.media_url
+      ? {
+          url: row.media_url,
+          type: row.media_type || 'image',
+        }
+      : null,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    viewed: row.user_id === viewerUserId ? true : viewedSet.has(row.id),
+    own: row.user_id === viewerUserId,
+  }
+}
+
+function sortStoryGroups(groups) {
+  return [...groups].sort((a, b) => {
+    if (a.own !== b.own) {
+      return a.own ? -1 : 1
+    }
+
+    if (a.hasUnviewed !== b.hasUnviewed) {
+      return a.hasUnviewed ? -1 : 1
+    }
+
+    return new Date(b.latestAt) - new Date(a.latestAt)
+  })
+}
+
+export async function fetchActiveStories({ viewerUserId }) {
+  const client = requireSupabase()
+
+  const { data: storyRows, error: storiesError } = await client
+    .from('stories')
+    .select(
+      `
+      id,
+      user_id,
+      content,
+      track_title,
+      track_artist,
+      media_url,
+      media_type,
+      created_at,
+      expires_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: true })
+    .limit(250)
+
+  if (storiesError) {
+    if (isMissingStoriesRelation(storiesError)) {
+      return []
+    }
+
+    throw storiesError
+  }
+
+  const rows = storyRows || []
+  if (!rows.length) {
+    return []
+  }
+
+  const storyIds = rows.map((row) => row.id)
+  let viewedSet = new Set()
+
+  if (viewerUserId) {
+    const { data: viewRows, error: viewsError } = await client
+      .from('story_views')
+      .select('story_id')
+      .eq('user_id', viewerUserId)
+      .in('story_id', storyIds)
+
+    if (viewsError && !isMissingStoriesRelation(viewsError)) {
+      throw viewsError
+    }
+
+    viewedSet = new Set((viewRows || []).map((row) => row.story_id))
+  }
+
+  const groupMap = new Map()
+  for (const row of rows) {
+    const mapped = mapStory(row, viewedSet, viewerUserId)
+    const existing = groupMap.get(mapped.userId)
+
+    if (existing) {
+      existing.items.push(mapped)
+      if (new Date(mapped.createdAt) > new Date(existing.latestAt)) {
+        existing.latestAt = mapped.createdAt
+      }
+      existing.hasUnviewed = existing.hasUnviewed || !mapped.viewed
+    } else {
+      groupMap.set(mapped.userId, {
+        userId: mapped.userId,
+        user: mapped.user,
+        own: mapped.own,
+        latestAt: mapped.createdAt,
+        hasUnviewed: !mapped.viewed,
+        items: [mapped],
+      })
+    }
+  }
+
+  return sortStoryGroups(Array.from(groupMap.values()))
+}
+
+export async function markStoryViewed({ storyId, userId }) {
+  const client = requireSupabase()
+
+  const { error } = await client.from('story_views').upsert(
+    {
+      story_id: storyId,
+      user_id: userId,
+    },
+    { onConflict: 'story_id,user_id', ignoreDuplicates: true },
+  )
+
+  if (error) {
+    if (isMissingStoriesRelation(error)) {
+      throw storiesSetupError()
+    }
+
+    throw error
+  }
+}
+
 export async function fetchDirectThreads({ userId }) {
   const client = requireSupabase()
 
@@ -879,6 +1079,64 @@ async function uploadMedia(userId, file, category = 'posts') {
     url: data.publicUrl,
     type: file.type.startsWith('audio/') ? 'audio' : 'image',
   }
+}
+
+export async function createStory({ userId, content, trackTitle, trackArtist, mediaFile }) {
+  const client = requireSupabase()
+  const text = String(content || '').trim()
+  const title = String(trackTitle || '').trim()
+  const artist = String(trackArtist || '').trim()
+
+  if ((title && !artist) || (!title && artist)) {
+    throw new Error('Preencha titulo e artista juntos no story.')
+  }
+
+  if (!text && !mediaFile && !title) {
+    throw new Error('Story vazio. Escreva algo, adicione faixa ou envie midia.')
+  }
+
+  const media = await uploadMedia(userId, mediaFile, 'stories')
+
+  const { data, error } = await client
+    .from('stories')
+    .insert({
+      user_id: userId,
+      content: text || '',
+      track_title: title || null,
+      track_artist: artist || null,
+      media_url: media?.url || null,
+      media_type: media?.type || null,
+    })
+    .select(
+      `
+      id,
+      user_id,
+      content,
+      track_title,
+      track_artist,
+      media_url,
+      media_type,
+      created_at,
+      expires_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .single()
+
+  if (error) {
+    if (isMissingStoriesRelation(error)) {
+      throw storiesSetupError()
+    }
+
+    throw error
+  }
+
+  return mapStory(data, new Set(), userId)
 }
 
 export async function updateOwnProfile({ userId, name, bio, avatarFile }) {

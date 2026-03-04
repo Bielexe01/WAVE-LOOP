@@ -13,18 +13,22 @@ import {
 import { isSupabaseConfigured } from './lib/supabase'
 import {
   addComment,
+  createStory,
   createOrGetDirectThread,
   createPost,
   ensureProfile,
+  fetchActiveStories,
   fetchDirectThreads,
   fetchFollowStats,
   fetchFeed,
   fetchPeopleToFollow,
   fetchPublicProfileByHandle,
   getSession,
+  markStoryViewed,
   markDirectThreadRead,
   listenAuthStateChange,
   subscribeDirectInbox,
+  subscribeStories,
   sendDirectMessage as sendDirectMessageToThread,
   signIn,
   signOut,
@@ -193,6 +197,127 @@ function buildInitialDirectThreads() {
   ])
 }
 
+function sortStoryGroups(groups) {
+  return [...groups].sort((a, b) => {
+    if (a.own !== b.own) {
+      return a.own ? -1 : 1
+    }
+
+    if (a.hasUnviewed !== b.hasUnviewed) {
+      return a.hasUnviewed ? -1 : 1
+    }
+
+    return new Date(b.latestAt) - new Date(a.latestAt)
+  })
+}
+
+function buildLocalStoryGroups({ currentUser, posts, peopleToFollow }) {
+  const groupsMap = new Map()
+
+  for (const post of posts.slice(0, 24)) {
+    const userId = post.user.id
+    const existing = groupsMap.get(userId)
+    const mappedStory = {
+      id: `local-story-${post.id}`,
+      userId,
+      user: {
+        id: userId,
+        name: post.user.name,
+        handle: normalizeHandle(post.user.handle),
+        avatarUrl: post.user.avatarUrl || null,
+      },
+      text: post.text || '',
+      media: post.media || null,
+      track: post.track || null,
+      createdAt: post.createdAt || new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      viewed: currentUser ? userId === currentUser.id : false,
+      own: currentUser ? userId === currentUser.id : false,
+    }
+
+    if (existing) {
+      if (existing.items.length < 3) {
+        existing.items.push(mappedStory)
+      }
+      existing.latestAt = new Date(existing.latestAt) > new Date(mappedStory.createdAt) ? existing.latestAt : mappedStory.createdAt
+      existing.hasUnviewed = existing.hasUnviewed || !mappedStory.viewed
+    } else {
+      groupsMap.set(userId, {
+        userId,
+        user: mappedStory.user,
+        own: mappedStory.own,
+        latestAt: mappedStory.createdAt,
+        hasUnviewed: !mappedStory.viewed,
+        items: [mappedStory],
+      })
+    }
+  }
+
+  if (currentUser && !groupsMap.has(currentUser.id)) {
+    const nowIso = new Date().toISOString()
+    groupsMap.set(currentUser.id, {
+      userId: currentUser.id,
+      user: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+        avatarUrl: currentUser.avatarUrl || null,
+      },
+      own: true,
+      latestAt: nowIso,
+      hasUnviewed: false,
+      items: [],
+    })
+  }
+
+  if (groupsMap.size < 6) {
+    for (const person of peopleToFollow.slice(0, 8)) {
+      if (groupsMap.has(person.id)) {
+        continue
+      }
+
+      const createdAt = new Date(Date.now() - Math.floor(Math.random() * 9 + 1) * 60 * 60 * 1000).toISOString()
+      groupsMap.set(person.id, {
+        userId: person.id,
+        user: {
+          id: person.id,
+          name: person.name,
+          handle: normalizeHandle(person.handle),
+          avatarUrl: person.avatarUrl || null,
+        },
+        own: false,
+        latestAt: createdAt,
+        hasUnviewed: true,
+        items: [
+          {
+            id: `local-story-person-${person.id}`,
+            userId: person.id,
+            user: {
+              id: person.id,
+              name: person.name,
+              handle: normalizeHandle(person.handle),
+              avatarUrl: person.avatarUrl || null,
+            },
+            text: person.role || 'No estudio hoje.',
+            media: null,
+            track: null,
+            createdAt,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            viewed: false,
+            own: false,
+          },
+        ],
+      })
+
+      if (groupsMap.size >= 10) {
+        break
+      }
+    }
+  }
+
+  return sortStoryGroups(Array.from(groupsMap.values()))
+}
+
 const communityCards = [
   {
     id: 'comm-1',
@@ -302,6 +427,22 @@ function App() {
   const [loadingDirect, setLoadingDirect] = useState(false)
   const [sendingDirect, setSendingDirect] = useState(false)
   const [directDraft, setDirectDraft] = useState('')
+  const [stories, setStories] = useState([])
+  const [loadingStories, setLoadingStories] = useState(false)
+  const [storyComposerOpen, setStoryComposerOpen] = useState(false)
+  const [publishingStory, setPublishingStory] = useState(false)
+  const [storyDraft, setStoryDraft] = useState({
+    text: '',
+    track: '',
+    artist: '',
+  })
+  const [storyMediaFile, setStoryMediaFile] = useState(null)
+  const [storyMediaPreview, setStoryMediaPreview] = useState('')
+  const [storyViewer, setStoryViewer] = useState({
+    open: false,
+    userId: '',
+    itemIndex: 0,
+  })
 
   const [composer, setComposer] = useState({
     text: '',
@@ -323,6 +464,8 @@ function App() {
   const directReplyTimeoutRef = useRef(null)
   const commentInputRefs = useRef({})
   const composerRef = useRef(null)
+  const storyMediaInputRef = useRef(null)
+  const storyAutoAdvanceRef = useRef(null)
 
   const currentUser = useMemo(() => {
     if (!isSupabaseConfigured) {
@@ -368,61 +511,21 @@ function App() {
     return directThreads.reduce((acc, thread) => acc + (thread.unread || 0), 0)
   }, [directThreads])
 
-  const storyPeople = useMemo(() => {
-    const seeds = []
-
-    if (currentUser) {
-      seeds.push({
-        id: currentUser.id,
-        name: currentUser.name,
-        handle: currentUser.handle,
-        avatarUrl: currentUser.avatarUrl || null,
-        own: true,
-      })
+  const activeStoryGroup = useMemo(() => {
+    if (!storyViewer.open) {
+      return null
     }
 
-    for (const person of peopleToFollow) {
-      seeds.push({
-        id: person.id,
-        name: person.name,
-        handle: person.handle,
-        avatarUrl: person.avatarUrl || null,
-        own: false,
-      })
+    return stories.find((group) => group.userId === storyViewer.userId) || null
+  }, [stories, storyViewer])
+
+  const activeStoryItem = useMemo(() => {
+    if (!activeStoryGroup) {
+      return null
     }
 
-    for (const post of posts) {
-      seeds.push({
-        id: post.user.id,
-        name: post.user.name,
-        handle: post.user.handle,
-        avatarUrl: post.user.avatarUrl || null,
-        own: false,
-      })
-    }
-
-    const unique = []
-    const seen = new Set()
-
-    for (const item of seeds) {
-      const key = normalizeHandle(item.handle || item.name).toLowerCase()
-      if (!key || seen.has(key)) {
-        continue
-      }
-
-      seen.add(key)
-      unique.push({
-        ...item,
-        handle: normalizeHandle(item.handle || item.name),
-      })
-
-      if (unique.length >= 10) {
-        break
-      }
-    }
-
-    return unique
-  }, [currentUser, peopleToFollow, posts])
+    return activeStoryGroup.items[storyViewer.itemIndex] || null
+  }, [activeStoryGroup, storyViewer.itemIndex])
 
   const postsForView = useMemo(() => {
     if (activeNav === 'Direct') {
@@ -542,6 +645,23 @@ function App() {
     }
   }, [])
 
+  const loadStories = useCallback(async (userId) => {
+    if (!isSupabaseConfigured || !userId) {
+      return
+    }
+
+    setLoadingStories(true)
+
+    try {
+      const nextStories = await fetchActiveStories({ viewerUserId: userId })
+      setStories(nextStories)
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Falha ao carregar stories.'))
+    } finally {
+      setLoadingStories(false)
+    }
+  }, [])
+
   const loadDirectInbox = useCallback(async (userId, preferredThreadId = '') => {
     if (!isSupabaseConfigured || !userId) {
       return
@@ -590,6 +710,12 @@ function App() {
         setPosts([])
         setPlayingPostId('')
         setPublicProfile(null)
+        setStories([])
+        setStoryViewer({
+          open: false,
+          userId: '',
+          itemIndex: 0,
+        })
         setDirectThreads([])
         setActiveDirectThreadId('')
         setPeopleToFollow(buildLocalPeople())
@@ -612,6 +738,7 @@ function App() {
           loadFeed(nextSession.user.id),
           loadFollowStats(nextSession.user.id),
           loadPeopleToFollow(nextSession.user.id),
+          loadStories(nextSession.user.id),
           loadDirectInbox(nextSession.user.id),
         ])
       } catch (error) {
@@ -648,7 +775,7 @@ function App() {
       isMounted = false
       unsubscribe()
     }
-  }, [loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow])
+  }, [loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadStories])
 
   useEffect(() => {
     if (activeDirectThread) {
@@ -716,6 +843,73 @@ function App() {
   }, [currentUser, loadDirectInbox])
 
   useEffect(() => {
+    if (isSupabaseConfigured) {
+      return
+    }
+
+    setStories(
+      buildLocalStoryGroups({
+        currentUser,
+        posts,
+        peopleToFollow,
+      }),
+    )
+  }, [currentUser, peopleToFollow, posts])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !currentUser?.id) {
+      return undefined
+    }
+
+    let refreshTimeout = null
+
+    const queueStoriesReload = () => {
+      if (refreshTimeout) {
+        return
+      }
+
+      refreshTimeout = setTimeout(() => {
+        refreshTimeout = null
+        void loadStories(currentUser.id)
+      }, 300)
+    }
+
+    const unsubscribe = subscribeStories({
+      userId: currentUser.id,
+      onChange: () => {
+        queueStoriesReload()
+      },
+      onError: (error) => {
+        setErrorMessage(toMessage(error, 'Falha ao sincronizar stories em tempo real.'))
+      },
+    })
+
+    return () => {
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout)
+      }
+      unsubscribe()
+    }
+  }, [currentUser, loadStories])
+
+  useEffect(() => {
+    if (!storyViewer.open) {
+      return
+    }
+
+    const exists = stories.some((group) => group.userId === storyViewer.userId)
+    if (exists) {
+      return
+    }
+
+    setStoryViewer({
+      open: false,
+      userId: '',
+      itemIndex: 0,
+    })
+  }, [stories, storyViewer])
+
+  useEffect(() => {
     return () => {
       if (mediaPreview) {
         URL.revokeObjectURL(mediaPreview)
@@ -725,6 +919,10 @@ function App() {
         URL.revokeObjectURL(profileAvatarPreview)
       }
 
+      if (storyMediaPreview) {
+        URL.revokeObjectURL(storyMediaPreview)
+      }
+
       if (likeBurstTimeoutRef.current) {
         clearTimeout(likeBurstTimeoutRef.current)
       }
@@ -732,8 +930,12 @@ function App() {
       if (directReplyTimeoutRef.current) {
         clearTimeout(directReplyTimeoutRef.current)
       }
+
+      if (storyAutoAdvanceRef.current) {
+        clearTimeout(storyAutoAdvanceRef.current)
+      }
     }
-  }, [mediaPreview, profileAvatarPreview])
+  }, [mediaPreview, profileAvatarPreview, storyMediaPreview])
 
   useEffect(() => {
     if (!currentUser) {
@@ -967,6 +1169,325 @@ function App() {
     setActiveDirectThreadId(newThread.id)
     activateNav('Direct')
   }
+
+  const clearStoryComposerMedia = useCallback(() => {
+    if (storyMediaPreview) {
+      URL.revokeObjectURL(storyMediaPreview)
+    }
+
+    setStoryMediaFile(null)
+    setStoryMediaPreview('')
+
+    if (storyMediaInputRef.current) {
+      storyMediaInputRef.current.value = ''
+    }
+  }, [storyMediaPreview])
+
+  const openStoryComposer = useCallback(() => {
+    if (!currentUser) {
+      return
+    }
+
+    setStoryDraft({
+      text: '',
+      track: '',
+      artist: '',
+    })
+    clearStoryComposerMedia()
+    setStoryComposerOpen(true)
+  }, [clearStoryComposerMedia, currentUser])
+
+  const closeStoryComposer = useCallback(() => {
+    setStoryComposerOpen(false)
+    clearStoryComposerMedia()
+  }, [clearStoryComposerMedia])
+
+  const openStoryGroup = useCallback((userId, itemIndex = 0) => {
+    if (!userId) {
+      return
+    }
+
+    setStoryViewer({
+      open: true,
+      userId,
+      itemIndex,
+    })
+  }, [])
+
+  const closeStoryViewer = useCallback(() => {
+    setStoryViewer({
+      open: false,
+      userId: '',
+      itemIndex: 0,
+    })
+  }, [])
+
+  const goToNextStory = useCallback(() => {
+    setStoryViewer((current) => {
+      if (!current.open) {
+        return current
+      }
+
+      const currentGroupIndex = stories.findIndex((group) => group.userId === current.userId)
+      if (currentGroupIndex < 0) {
+        return {
+          open: false,
+          userId: '',
+          itemIndex: 0,
+        }
+      }
+
+      const currentGroup = stories[currentGroupIndex]
+      if (current.itemIndex < currentGroup.items.length - 1) {
+        return {
+          ...current,
+          itemIndex: current.itemIndex + 1,
+        }
+      }
+
+      const nextGroup = stories.slice(currentGroupIndex + 1).find((group) => group.items.length > 0)
+      if (!nextGroup) {
+        return {
+          open: false,
+          userId: '',
+          itemIndex: 0,
+        }
+      }
+
+      return {
+        open: true,
+        userId: nextGroup.userId,
+        itemIndex: 0,
+      }
+    })
+  }, [stories])
+
+  const goToPrevStory = useCallback(() => {
+    setStoryViewer((current) => {
+      if (!current.open) {
+        return current
+      }
+
+      const currentGroupIndex = stories.findIndex((group) => group.userId === current.userId)
+      if (currentGroupIndex < 0) {
+        return current
+      }
+
+      if (current.itemIndex > 0) {
+        return {
+          ...current,
+          itemIndex: current.itemIndex - 1,
+        }
+      }
+
+      const previousGroups = stories.slice(0, currentGroupIndex).filter((group) => group.items.length > 0)
+      if (!previousGroups.length) {
+        return current
+      }
+
+      const previousGroup = previousGroups[previousGroups.length - 1]
+      return {
+        open: true,
+        userId: previousGroup.userId,
+        itemIndex: Math.max(0, previousGroup.items.length - 1),
+      }
+    })
+  }, [stories])
+
+  const markStoryViewedLocally = useCallback((storyId) => {
+    setStories((current) =>
+      current.map((group) => {
+        let changed = false
+        const nextItems = group.items.map((item) => {
+          if (item.id !== storyId || item.viewed) {
+            return item
+          }
+
+          changed = true
+          return {
+            ...item,
+            viewed: true,
+          }
+        })
+
+        if (!changed) {
+          return group
+        }
+
+        return {
+          ...group,
+          items: nextItems,
+          hasUnviewed: nextItems.some((item) => !item.viewed),
+        }
+      }),
+    )
+  }, [])
+
+  const onSelectStoryMedia = (event) => {
+    const [file] = event.target.files || []
+
+    if (!file) {
+      clearStoryComposerMedia()
+      return
+    }
+
+    if (!isAllowedFile(file)) {
+      setErrorMessage('Story aceita apenas imagem ou audio.')
+      clearStoryComposerMedia()
+      return
+    }
+
+    if (storyMediaPreview) {
+      URL.revokeObjectURL(storyMediaPreview)
+    }
+
+    setStoryMediaFile(file)
+    setStoryMediaPreview(URL.createObjectURL(file))
+  }
+
+  const publishStory = async (event) => {
+    event.preventDefault()
+
+    if (!currentUser) {
+      return
+    }
+
+    const text = storyDraft.text.trim()
+    const trackTitle = storyDraft.track.trim()
+    const trackArtist = storyDraft.artist.trim()
+
+    if ((trackTitle && !trackArtist) || (!trackTitle && trackArtist)) {
+      setErrorMessage('Preencha nome da faixa e artista juntos no story.')
+      return
+    }
+
+    if (!text && !trackTitle && !trackArtist && !storyMediaFile) {
+      setErrorMessage('Escreva algo, informe uma faixa ou adicione midia ao story.')
+      return
+    }
+
+    setPublishingStory(true)
+    setErrorMessage('')
+
+    try {
+      if (isSupabaseConfigured) {
+        await createStory({
+          userId: currentUser.id,
+          content: text,
+          trackTitle,
+          trackArtist,
+          mediaFile: storyMediaFile,
+        })
+        await loadStories(currentUser.id)
+      } else {
+        const createdAt = new Date().toISOString()
+        let localMedia = null
+
+        if (storyMediaFile) {
+          const base64 = await readFileAsDataUrl(storyMediaFile)
+          localMedia = {
+            url: base64,
+            type: storyMediaFile.type.startsWith('audio/') ? 'audio' : 'image',
+          }
+        }
+
+        const newStory = {
+          id: `local-story-new-${Date.now()}`,
+          userId: currentUser.id,
+          user: {
+            id: currentUser.id,
+            name: currentUser.name,
+            handle: normalizeHandle(currentUser.handle),
+            avatarUrl: currentUser.avatarUrl || null,
+          },
+          text,
+          media: localMedia,
+          track: trackTitle && trackArtist ? { title: trackTitle, artist: trackArtist } : null,
+          createdAt,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          viewed: true,
+          own: true,
+        }
+
+        setStories((current) => {
+          const existing = current.find((group) => group.userId === currentUser.id)
+          if (!existing) {
+            return sortStoryGroups([
+              {
+                userId: currentUser.id,
+                user: newStory.user,
+                own: true,
+                latestAt: createdAt,
+                hasUnviewed: false,
+                items: [newStory],
+              },
+              ...current,
+            ])
+          }
+
+          const next = current.map((group) =>
+            group.userId === currentUser.id
+              ? {
+                  ...group,
+                  own: true,
+                  latestAt: createdAt,
+                  hasUnviewed: false,
+                  items: [...group.items, newStory].slice(-6),
+                }
+              : group,
+          )
+
+          return sortStoryGroups(next)
+        })
+      }
+
+      closeStoryComposer()
+      setStatusMessage('Story publicado com sucesso.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel publicar o story.'))
+    } finally {
+      setPublishingStory(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!storyViewer.open || !activeStoryItem || !currentUser) {
+      return
+    }
+
+    markStoryViewedLocally(activeStoryItem.id)
+
+    if (isSupabaseConfigured && !activeStoryItem.own && !activeStoryItem.viewed) {
+      void markStoryViewed({
+        storyId: activeStoryItem.id,
+        userId: currentUser.id,
+      }).catch((error) => {
+        setErrorMessage(toMessage(error, 'Nao foi possivel atualizar visualizacao do story.'))
+      })
+    }
+  }, [activeStoryItem, currentUser, markStoryViewedLocally, storyViewer.open])
+
+  useEffect(() => {
+    if (!storyViewer.open || !activeStoryItem) {
+      return
+    }
+
+    const duration = activeStoryItem.media?.type === 'audio' ? 7600 : 4800
+
+    if (storyAutoAdvanceRef.current) {
+      clearTimeout(storyAutoAdvanceRef.current)
+    }
+
+    storyAutoAdvanceRef.current = setTimeout(() => {
+      goToNextStory()
+    }, duration)
+
+    return () => {
+      if (storyAutoAdvanceRef.current) {
+        clearTimeout(storyAutoAdvanceRef.current)
+      }
+    }
+  }, [activeStoryItem, goToNextStory, storyViewer.open])
 
   const setActionBusy = useCallback((actionId, value) => {
     setBusyActions((current) => ({ ...current, [actionId]: value }))
@@ -1905,24 +2426,69 @@ function App() {
 
           {activeNav === 'Feed' && !publicProfile && (
             <section className="stories-strip appear-up delay-1" aria-label="Stories">
-              <ul>
-                {storyPeople.map((person) => (
-                  <li key={`story-${person.id}`}>
-                    <button
-                      type="button"
-                      className="story-item"
-                      onClick={() => openPublicProfile(person.handle)}
-                    >
-                      <div className={person.own ? 'story-ring own' : 'story-ring'}>
-                        <div className="avatar">
-                          {person.avatarUrl ? <img src={person.avatarUrl} alt={person.name} /> : initials(person.name)}
-                        </div>
-                      </div>
-                      <span>{person.own ? 'Seu story' : person.name.split(' ')[0]}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <header className="stories-head">
+                <h3>Stories</h3>
+                <button type="button" className="secondary-btn stories-create-btn" onClick={openStoryComposer}>
+                  Novo story
+                </button>
+              </header>
+
+              {loadingStories && <div className="notice">Carregando stories...</div>}
+
+              {!loadingStories && stories.length === 0 && (
+                <div className="notice">Ainda nao existem stories ativos. Publique o primeiro agora.</div>
+              )}
+
+              {!loadingStories && stories.length > 0 && (
+                <ul>
+                  {stories.map((group) => {
+                    const isOwnEmpty = group.own && group.items.length === 0
+                    const isActive = storyViewer.open && storyViewer.userId === group.userId
+                    const displayName = group.own ? 'Seu story' : group.user.name.split(' ')[0]
+                    const ringClassName = group.own
+                      ? group.hasUnviewed
+                        ? 'story-ring own'
+                        : 'story-ring own viewed'
+                      : group.hasUnviewed
+                        ? 'story-ring'
+                        : 'story-ring viewed'
+
+                    return (
+                      <li key={`story-${group.userId}`}>
+                        <button
+                          type="button"
+                          className={isActive ? 'story-item active' : 'story-item'}
+                          onClick={() => {
+                            if (group.items.length > 0) {
+                              openStoryGroup(group.userId)
+                              return
+                            }
+
+                            if (group.own) {
+                              openStoryComposer()
+                              return
+                            }
+
+                            void openPublicProfile(group.user.handle)
+                          }}
+                        >
+                          <div className={ringClassName}>
+                            <div className="avatar">
+                              {group.user.avatarUrl ? (
+                                <img src={group.user.avatarUrl} alt={group.user.name} />
+                              ) : (
+                                initials(group.user.name)
+                              )}
+                            </div>
+                            {isOwnEmpty && <span className="story-plus">+</span>}
+                          </div>
+                          <span>{displayName}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </section>
           )}
 
@@ -2572,6 +3138,206 @@ function App() {
         </aside>
         )}
       </div>
+
+      {storyViewer.open && activeStoryGroup && activeStoryItem && (
+        <div className="story-viewer-overlay" role="presentation" onClick={closeStoryViewer}>
+          <section
+            className="story-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Story de ${activeStoryGroup.user.name}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="story-viewer-head">
+              <div className="story-progress">
+                {activeStoryGroup.items.map((item, index) => (
+                  <span
+                    key={`story-progress-${item.id}`}
+                    className={
+                      index < storyViewer.itemIndex
+                        ? 'done'
+                        : index === storyViewer.itemIndex
+                          ? 'active'
+                          : ''
+                    }
+                  />
+                ))}
+              </div>
+              <div className="story-viewer-meta">
+                <div className="story-meta-user">
+                  <div className="avatar">
+                    {activeStoryGroup.user.avatarUrl ? (
+                      <img src={activeStoryGroup.user.avatarUrl} alt={activeStoryGroup.user.name} />
+                    ) : (
+                      initials(activeStoryGroup.user.name)
+                    )}
+                  </div>
+                  <div>
+                    <strong>{activeStoryGroup.user.name}</strong>
+                    <p>
+                      @{normalizeHandle(activeStoryGroup.user.handle)} • {timeAgo(activeStoryItem.createdAt)}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" className="secondary-btn" onClick={closeStoryViewer}>
+                  Fechar
+                </button>
+              </div>
+            </header>
+
+            <div className="story-viewer-body">
+              <button type="button" className="story-nav story-nav-prev" aria-label="Story anterior" onClick={goToPrevStory}>
+                ‹
+              </button>
+
+              <article className="story-frame">
+                {activeStoryItem.media ? (
+                  activeStoryItem.media.type === 'audio' ? (
+                    <div className="story-audio-shell">
+                      <div
+                        className="story-artwork"
+                        aria-hidden="true"
+                        style={{
+                          backgroundImage: gradientFromSeed(
+                            `${activeStoryGroup.user.handle}-${activeStoryItem.createdAt}`,
+                          ),
+                        }}
+                      />
+                      <audio controls autoPlay src={activeStoryItem.media.url} preload="metadata" />
+                    </div>
+                  ) : (
+                    <img src={activeStoryItem.media.url} alt={`Story de ${activeStoryGroup.user.name}`} />
+                  )
+                ) : (
+                  <div
+                    className="story-fallback"
+                    style={{
+                      backgroundImage: gradientFromSeed(
+                        `${activeStoryGroup.user.handle}-${activeStoryItem.text || activeStoryItem.createdAt}`,
+                      ),
+                    }}
+                  />
+                )}
+
+                {(activeStoryItem.text || activeStoryItem.track) && (
+                  <div className="story-caption">
+                    {activeStoryItem.track && (
+                      <span className="story-track">
+                        {activeStoryItem.track.title} - {activeStoryItem.track.artist}
+                      </span>
+                    )}
+                    {activeStoryItem.text && <p>{activeStoryItem.text}</p>}
+                  </div>
+                )}
+              </article>
+
+              <button type="button" className="story-nav story-nav-next" aria-label="Proximo story" onClick={goToNextStory}>
+                ›
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {storyComposerOpen && (
+        <div className="modal-overlay" role="presentation" onClick={closeStoryComposer}>
+          <section
+            className="story-composer-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Criar story"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="profile-editor-head">
+              <h2>Novo story</h2>
+              <button type="button" className="secondary-btn" onClick={closeStoryComposer}>
+                Fechar
+              </button>
+            </header>
+
+            <form className="profile-editor-form" onSubmit={publishStory}>
+              <label>
+                Texto do story
+                <textarea
+                  value={storyDraft.text}
+                  maxLength={240}
+                  onChange={(event) =>
+                    setStoryDraft((current) => ({
+                      ...current,
+                      text: event.target.value,
+                    }))
+                  }
+                  placeholder="Compartilhe uma ideia, trecho ou mensagem."
+                />
+              </label>
+
+              <div className="composer-grid story-composer-grid">
+                <input
+                  value={storyDraft.track}
+                  onChange={(event) =>
+                    setStoryDraft((current) => ({
+                      ...current,
+                      track: event.target.value,
+                    }))
+                  }
+                  type="text"
+                  placeholder="Nome da faixa (opcional)"
+                />
+                <input
+                  value={storyDraft.artist}
+                  onChange={(event) =>
+                    setStoryDraft((current) => ({
+                      ...current,
+                      artist: event.target.value,
+                    }))
+                  }
+                  type="text"
+                  placeholder="Artista (opcional)"
+                />
+              </div>
+
+              <div className="media-input-row">
+                <label className="file-pill" htmlFor="story-file-input">
+                  {storyMediaFile ? 'Trocar imagem/audio' : 'Adicionar imagem/audio'}
+                </label>
+                <input
+                  id="story-file-input"
+                  ref={storyMediaInputRef}
+                  type="file"
+                  className="file-native"
+                  accept="image/*,audio/*"
+                  onChange={onSelectStoryMedia}
+                />
+                {storyMediaFile && (
+                  <button type="button" className="secondary-btn" onClick={clearStoryComposerMedia}>
+                    Remover arquivo
+                  </button>
+                )}
+              </div>
+
+              {storyMediaFile && (
+                <div className="draft-preview">
+                  <p>
+                    Arquivo selecionado: <strong>{storyMediaFile.name}</strong>
+                  </p>
+                  {storyMediaFile.type.startsWith('audio/') ? (
+                    <audio controls src={storyMediaPreview} preload="metadata" />
+                  ) : (
+                    <img src={storyMediaPreview} alt="Preview do story" />
+                  )}
+                </div>
+              )}
+
+              <div className="profile-editor-footer">
+                <span>{storyDraft.text.length}/240</span>
+                <button type="submit" className="primary-btn" disabled={publishingStory}>
+                  {publishingStory ? 'Publicando...' : 'Publicar story'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       {profileEditorOpen && (
         <div className="modal-overlay" role="presentation" onClick={closeProfileEditor}>

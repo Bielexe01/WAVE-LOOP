@@ -75,6 +75,34 @@ create table if not exists public.direct_messages (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.stories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  content text not null default '' check (char_length(content) <= 240),
+  track_title text,
+  track_artist text,
+  media_url text,
+  media_type text check (media_type in ('image', 'audio')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '24 hours'),
+  check (
+    char_length(coalesce(content, '')) > 0
+    or media_url is not null
+    or (track_title is not null and track_artist is not null)
+  ),
+  check (
+    (track_title is null and track_artist is null)
+    or (track_title is not null and track_artist is not null)
+  )
+);
+
+create table if not exists public.story_views (
+  story_id uuid not null references public.stories(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (story_id, user_id)
+);
+
 create index if not exists idx_posts_created_at on public.posts(created_at desc);
 create index if not exists idx_posts_user_id on public.posts(user_id);
 create index if not exists idx_comments_post_id on public.comments(post_id);
@@ -85,6 +113,10 @@ create index if not exists idx_direct_participants_user on public.direct_thread_
 create index if not exists idx_direct_participants_thread on public.direct_thread_participants(thread_id);
 create index if not exists idx_direct_messages_thread_created_at on public.direct_messages(thread_id, created_at desc);
 create index if not exists idx_direct_threads_updated_at on public.direct_threads(updated_at desc);
+create index if not exists idx_stories_user_created_at on public.stories(user_id, created_at desc);
+create index if not exists idx_stories_expires_at on public.stories(expires_at desc);
+create index if not exists idx_story_views_user on public.story_views(user_id);
+create index if not exists idx_story_views_story on public.story_views(story_id);
 
 alter table public.profiles enable row level security;
 alter table public.posts enable row level security;
@@ -95,6 +127,8 @@ alter table public.user_follows enable row level security;
 alter table public.direct_threads enable row level security;
 alter table public.direct_thread_participants enable row level security;
 alter table public.direct_messages enable row level security;
+alter table public.stories enable row level security;
+alter table public.story_views enable row level security;
 
 drop policy if exists "profiles_select_all" on public.profiles;
 create policy "profiles_select_all"
@@ -218,6 +252,49 @@ create policy "user_follows_delete_own"
 on public.user_follows
 for delete
 using (auth.uid() = follower_id);
+
+drop policy if exists "stories_select_all" on public.stories;
+create policy "stories_select_all"
+on public.stories
+for select
+using (expires_at > now());
+
+drop policy if exists "stories_insert_own" on public.stories;
+create policy "stories_insert_own"
+on public.stories
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "stories_update_own" on public.stories;
+create policy "stories_update_own"
+on public.stories
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "stories_delete_own" on public.stories;
+create policy "stories_delete_own"
+on public.stories
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists "story_views_select_own" on public.story_views;
+create policy "story_views_select_own"
+on public.story_views
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists "story_views_insert_own" on public.story_views;
+create policy "story_views_insert_own"
+on public.story_views
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "story_views_delete_own" on public.story_views;
+create policy "story_views_delete_own"
+on public.story_views
+for delete
+using (auth.uid() = user_id);
 
 create or replace function public.is_direct_thread_member(thread_uuid uuid)
 returns boolean
@@ -353,6 +430,55 @@ create trigger trg_direct_messages_refresh_thread
 after insert on public.direct_messages
 for each row
 execute procedure public.refresh_direct_thread_updated_at();
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    begin
+      if not exists (
+        select 1
+        from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = 'direct_messages'
+      ) then
+        alter publication supabase_realtime add table public.direct_messages;
+      end if;
+
+      if not exists (
+        select 1
+        from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = 'direct_thread_participants'
+      ) then
+        alter publication supabase_realtime add table public.direct_thread_participants;
+      end if;
+
+      if not exists (
+        select 1
+        from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = 'stories'
+      ) then
+        alter publication supabase_realtime add table public.stories;
+      end if;
+
+      if not exists (
+        select 1
+        from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = 'story_views'
+      ) then
+        alter publication supabase_realtime add table public.story_views;
+      end if;
+    exception
+      when insufficient_privilege then null;
+    end;
+  end if;
+end $$;
 
 insert into storage.buckets (id, name, public)
 values ('media', 'media', true)
