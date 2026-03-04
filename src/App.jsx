@@ -24,6 +24,7 @@ import {
   getSession,
   markDirectThreadRead,
   listenAuthStateChange,
+  subscribeDirectInbox,
   sendDirectMessage as sendDirectMessageToThread,
   signIn,
   signOut,
@@ -658,6 +659,61 @@ function App() {
       setActiveDirectThreadId(directThreads[0].id)
     }
   }, [activeDirectThread, directThreads])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !currentUser?.id) {
+      return undefined
+    }
+
+    let refreshTimeout = null
+    let queuedThreadId = ''
+
+    const queueDirectReload = (threadId = '') => {
+      if (threadId) {
+        queuedThreadId = threadId
+      }
+
+      if (refreshTimeout) {
+        return
+      }
+
+      refreshTimeout = setTimeout(() => {
+        refreshTimeout = null
+        const preferredThreadId = queuedThreadId
+        queuedThreadId = ''
+        void loadDirectInbox(currentUser.id, preferredThreadId)
+      }, 280)
+    }
+
+    const unsubscribe = subscribeDirectInbox({
+      userId: currentUser.id,
+      onChange: (event) => {
+        if (!event) {
+          return
+        }
+
+        const threadId = event.row?.thread_id || ''
+        const senderId = event.row?.sender_id
+
+        // Evita recarga duplicada quando eu mesmo envio mensagem (ja recarrega no submit).
+        if (event.type === 'message_insert' && senderId === currentUser.id) {
+          return
+        }
+
+        queueDirectReload(threadId)
+      },
+      onError: (error) => {
+        setErrorMessage(toMessage(error, 'Falha ao sincronizar mensagens do direct em tempo real.'))
+      },
+    })
+
+    return () => {
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout)
+      }
+      unsubscribe()
+    }
+  }, [currentUser, loadDirectInbox])
 
   useEffect(() => {
     return () => {

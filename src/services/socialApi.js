@@ -191,6 +191,55 @@ export function listenAuthStateChange(callback) {
   }
 }
 
+export function subscribeDirectInbox({ userId, onChange, onError }) {
+  const client = requireSupabase()
+
+  if (!userId) {
+    return () => {}
+  }
+
+  const channel = client
+    .channel(`direct-inbox-${userId}-${crypto.randomUUID()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'direct_messages',
+      },
+      (payload) => {
+        onChange?.({
+          type: 'message_insert',
+          row: payload.new || null,
+        })
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'direct_thread_participants',
+        filter: `user_id=eq.${userId}`,
+      },
+      (payload) => {
+        onChange?.({
+          type: 'participant_insert',
+          row: payload.new || null,
+        })
+      },
+    )
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        onError?.(new Error('Falha ao sincronizar direct em tempo real.'))
+      }
+    })
+
+  return () => {
+    void client.removeChannel(channel)
+  }
+}
+
 export async function signIn({ email, password }) {
   const client = requireSupabase()
   const { data, error } = await client.auth.signInWithPassword({ email, password })
