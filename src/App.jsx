@@ -248,14 +248,14 @@ const heroCountLabels = {
   Perfil: 'posts do seu perfil',
 }
 
-const mobileNavLabels = {
-  Feed: 'Feed',
-  Descobrir: 'Descobrir',
-  Direct: 'Direct',
-  Comunidades: 'Grupos',
-  Eventos: 'Eventos',
-  Playlists: 'Mixes',
-  Perfil: 'Perfil',
+const navPresentation = {
+  Feed: { label: 'Inicio', mobile: 'Inicio', icon: 'In' },
+  Descobrir: { label: 'Explorar', mobile: 'Explorar', icon: 'Ex' },
+  Direct: { label: 'Mensagens', mobile: 'Direct', icon: 'Dm' },
+  Comunidades: { label: 'Comunidades', mobile: 'Grupos', icon: 'Co' },
+  Eventos: { label: 'Eventos', mobile: 'Eventos', icon: 'Ev' },
+  Playlists: { label: 'Playlists', mobile: 'Mixes', icon: 'Pl' },
+  Perfil: { label: 'Perfil', mobile: 'Perfil', icon: 'Eu' },
 }
 
 function App() {
@@ -1745,17 +1745,28 @@ function App() {
           {!isSupabaseConfigured && <div className="notice warn">Modo demo sem backend ativo.</div>}
 
           <nav className="side-nav" aria-label="Navegacao principal">
-            {navItems.map((item) => (
-              <button
-                type="button"
-                key={item}
-                className={activeNav === item ? 'nav-item active' : 'nav-item'}
-                onClick={() => activateNav(item)}
-              >
-                <span>{item}</span>
-                {item === 'Direct' && totalDirectUnread > 0 && <span className="nav-badge">{compact(totalDirectUnread)}</span>}
-              </button>
-            ))}
+            {navItems.map((item) => {
+              const meta = navPresentation[item] || {
+                label: item,
+                mobile: item,
+                icon: item.slice(0, 2).toUpperCase(),
+              }
+
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  className={activeNav === item ? 'nav-item active' : 'nav-item'}
+                  onClick={() => activateNav(item)}
+                >
+                  <span className="nav-main">
+                    <span className="nav-icon">{meta.icon}</span>
+                    <span className="nav-text">{meta.label}</span>
+                  </span>
+                  {item === 'Direct' && totalDirectUnread > 0 && <span className="nav-badge">{compact(totalDirectUnread)}</span>}
+                </button>
+              )
+            })}
           </nav>
 
           <section className="profile-card sidebar-profile-card">
@@ -2658,7 +2669,7 @@ function App() {
             onClick={() => activateNav(item)}
             title={item}
           >
-            {mobileNavLabels[item] || item}
+            {(navPresentation[item] && navPresentation[item].mobile) || item}
           </button>
         ))}
       </nav>
