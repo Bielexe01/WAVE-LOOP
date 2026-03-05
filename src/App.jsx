@@ -59,8 +59,43 @@ function toMessage(error, fallback = 'Ocorreu um erro. Tente novamente.') {
   return error.message || fallback
 }
 
+const audioExtensions = new Set(['mp3', 'm4a', 'wav', 'ogg', 'oga', 'aac', 'flac', 'webm', 'opus'])
+const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'heic', 'heif'])
+
+function getFileExtension(file) {
+  const name = String(file?.name || '').toLowerCase()
+  const parts = name.split('.')
+  return parts.length > 1 ? parts.pop() || '' : ''
+}
+
+function inferMediaKindFromFile(file) {
+  if (!file) {
+    return null
+  }
+
+  const mime = String(file.type || '').toLowerCase()
+  if (mime.startsWith('image/')) {
+    return 'image'
+  }
+
+  if (mime.startsWith('audio/')) {
+    return 'audio'
+  }
+
+  const extension = getFileExtension(file)
+  if (imageExtensions.has(extension)) {
+    return 'image'
+  }
+
+  if (audioExtensions.has(extension)) {
+    return 'audio'
+  }
+
+  return null
+}
+
 function isAllowedFile(file) {
-  return file.type.startsWith('image/') || file.type.startsWith('audio/')
+  return inferMediaKindFromFile(file) !== null
 }
 
 function readFileAsDataUrl(file) {
@@ -570,6 +605,23 @@ function NavIcon({ name, active = false }) {
   }
 }
 
+function ThemeModeIcon({ mode }) {
+  if (mode === 'dark') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.95" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.9v2.2M12 18.9v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.9 12h2.2M18.9 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
+    </svg>
+  )
+}
+
 const navPresentation = {
   Feed: { label: 'Inicio', mobile: 'Inicio', icon: 'home' },
   Descobrir: { label: 'Explorar', mobile: 'Explorar', icon: 'compass' },
@@ -641,6 +693,14 @@ function App() {
     }
 
     return window.matchMedia('(max-width: 760px)').matches
+  })
+  const [themeMode, setThemeMode] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'clean'
+    }
+
+    const saved = window.localStorage.getItem('waveloop:theme-mode')
+    return saved === 'dark' ? 'dark' : 'clean'
   })
   const [directThemeOpen, setDirectThemeOpen] = useState(false)
   const [directMobileBg, setDirectMobileBg] = useState(directMobileThemePresets[0].color)
@@ -815,6 +875,7 @@ function App() {
 
   const showDirectListPane = !isMobileViewport || directMobileView === 'list'
   const showDirectChatPane = !isMobileViewport || directMobileView === 'chat'
+  const isDirectInitialLoading = loadingDirect && directThreads.length === 0
 
   const postsForView = useMemo(() => {
     if (activeNav === 'Direct') {
@@ -963,12 +1024,16 @@ function App() {
     }
   }, [])
 
-  const loadDirectInbox = useCallback(async (userId, preferredThreadId = '') => {
+  const loadDirectInbox = useCallback(async (userId, preferredThreadId = '', options = {}) => {
     if (!isSupabaseConfigured || !userId) {
       return
     }
 
-    setLoadingDirect(true)
+    const { silent = false } = options
+
+    if (!silent) {
+      setLoadingDirect(true)
+    }
 
     try {
       const threads = await fetchDirectThreads({ userId })
@@ -987,7 +1052,9 @@ function App() {
     } catch (error) {
       setErrorMessage(toMessage(error, 'Falha ao carregar o direct.'))
     } finally {
-      setLoadingDirect(false)
+      if (!silent) {
+        setLoadingDirect(false)
+      }
     }
   }, [])
 
@@ -1109,7 +1176,7 @@ function App() {
         refreshTimeout = null
         const preferredThreadId = queuedThreadId
         queuedThreadId = ''
-        void loadDirectInbox(currentUser.id, preferredThreadId)
+        void loadDirectInbox(currentUser.id, preferredThreadId, { silent: true })
       }, 280)
     }
 
@@ -1181,7 +1248,7 @@ function App() {
         queueStoriesReload()
       },
       onError: (error) => {
-        setErrorMessage(toMessage(error, 'Falha ao sincronizar stories em tempo real.'))
+        console.warn('Falha ao sincronizar stories em tempo real.', error)
       },
     })
 
@@ -1283,6 +1350,14 @@ function App() {
     }
   }, [mediaPreview])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem('waveloop:theme-mode', themeMode)
+  }, [themeMode])
+
   const openSpotifyPicker = useCallback(() => {
     setSpotifyPickerOpen(true)
     setSpotifyPickerQuery('')
@@ -1375,7 +1450,7 @@ function App() {
             threadId,
             userId: currentUser.id,
           })
-          await loadDirectInbox(currentUser.id, threadId)
+          await loadDirectInbox(currentUser.id, threadId, { silent: true })
         } catch (error) {
           setErrorMessage(toMessage(error, 'Nao foi possivel abrir este direct agora.'))
         }
@@ -1402,7 +1477,7 @@ function App() {
           content: text,
         })
         setDirectDraft('')
-        await loadDirectInbox(currentUser.id, activeDirectThread.id)
+        await loadDirectInbox(currentUser.id, activeDirectThread.id, { silent: true })
       } catch (error) {
         setErrorMessage(toMessage(error, 'Nao foi possivel enviar a mensagem no direct.'))
       } finally {
@@ -1483,7 +1558,7 @@ function App() {
           userId: currentUser.id,
           targetUserId: targetProfile.id,
         })
-        await loadDirectInbox(currentUser.id, threadId)
+        await loadDirectInbox(currentUser.id, threadId, { silent: true })
         activateNav('Direct')
         if (isMobileViewport) {
           setDirectMobileView('chat')
@@ -1745,7 +1820,7 @@ function App() {
           const base64 = await readFileAsDataUrl(storyMediaFile)
           localMedia = {
             url: base64,
-            type: storyMediaFile.type.startsWith('audio/') ? 'audio' : 'image',
+            type: inferMediaKindFromFile(storyMediaFile) || 'image',
           }
         }
 
@@ -2054,7 +2129,7 @@ function App() {
           const base64 = await readFileAsDataUrl(mediaFile)
           localMedia = {
             url: base64,
-            type: mediaFile.type.startsWith('audio/') ? 'audio' : 'image',
+            type: inferMediaKindFromFile(mediaFile) || 'image',
           }
         }
 
@@ -2669,6 +2744,7 @@ function App() {
   const isDirectFullscreen = activeNav === 'Direct' && !publicProfile
   const rootClassName = [
     'scene-root',
+    `theme-${themeMode}`,
     isDirectFullscreen ? 'is-direct-fullscreen' : '',
     isMobileViewport && isDirectFullscreen ? 'is-mobile-direct' : '',
   ]
@@ -2757,6 +2833,17 @@ function App() {
       <div className="app-shell">
         <aside className="panel left-panel appear-up">
           <div className="brand">WaveLoop</div>
+          <div className="theme-switch" role="group" aria-label="Modo de tema">
+            <button
+              type="button"
+              className="theme-icon-toggle"
+              onClick={() => setThemeMode((current) => (current === 'dark' ? 'clean' : 'dark'))}
+              aria-label={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+              title={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+            >
+              <ThemeModeIcon mode={themeMode} />
+            </button>
+          </div>
 
           {!isSupabaseConfigured && <div className="notice warn">Modo demo sem backend ativo.</div>}
 
@@ -2962,6 +3049,15 @@ function App() {
                 </button>
                 <button type="button" className="secondary-btn" onClick={() => activateNav('Direct')}>
                   Mensagens
+                </button>
+                <button
+                  type="button"
+                  className="theme-icon-toggle compact"
+                  onClick={() => setThemeMode((current) => (current === 'dark' ? 'clean' : 'dark'))}
+                  aria-label={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+                  title={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+                >
+                  <ThemeModeIcon mode={themeMode} />
                 </button>
               </div>
             </section>
@@ -3311,13 +3407,34 @@ function App() {
                     <h2>Direct</h2>
                     <span>{compact(totalDirectUnread)} nao lidas</span>
                   </div>
-                  <button
-                    type="button"
-                    className="secondary-btn direct-theme-toggle"
-                    onClick={() => setDirectThemeOpen((current) => !current)}
-                  >
-                    Tema
-                  </button>
+                  <div className="direct-board-actions">
+                    <button
+                      type="button"
+                      className="secondary-btn direct-theme-toggle"
+                      onClick={() => setDirectThemeOpen((current) => !current)}
+                    >
+                      Tema
+                    </button>
+                    <button
+                      type="button"
+                      className="theme-icon-toggle compact direct-mode-btn"
+                      onClick={() => setThemeMode((current) => (current === 'dark' ? 'clean' : 'dark'))}
+                      aria-label={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+                      title={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
+                    >
+                      <ThemeModeIcon mode={themeMode} />
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn direct-exit-btn"
+                      onClick={() => {
+                        setDirectThemeOpen(false)
+                        activateNav('Feed')
+                      }}
+                    >
+                      Voltar
+                    </button>
+                  </div>
                 </header>
                 {directThemeOpen && (
                   <div className="direct-theme-panel">
@@ -3344,8 +3461,8 @@ function App() {
                     </label>
                   </div>
                 )}
-                {loadingDirect && <div className="notice">Carregando conversas...</div>}
-                {!loadingDirect && (
+                {isDirectInitialLoading && <div className="notice">Carregando conversas...</div>}
+                {!isDirectInitialLoading && (
                   <ul>
                     {directThreads.map((thread) => {
                       const active = thread.id === activeDirectThread?.id
@@ -3386,7 +3503,7 @@ function App() {
                     : 'direct-chat direct-pane direct-pane-chat is-inactive'
                 }
               >
-                {loadingDirect ? (
+                {isDirectInitialLoading ? (
                   <div className="notice">Sincronizando mensagens...</div>
                 ) : activeDirectThread ? (
                   <>
@@ -3625,7 +3742,7 @@ function App() {
                 ref={fileInputRef}
                 type="file"
                 className="file-native"
-                accept="image/*,audio/*"
+                accept="image/*,audio/*,.mp3,.m4a,.wav,.ogg,.aac,.flac,.webm,.opus,.jpg,.jpeg,.png,.webp,.gif,.avif,.heic,.heif"
                 onChange={onSelectMedia}
               />
               {mediaFile && (
@@ -3640,7 +3757,7 @@ function App() {
                 <p>
                   Arquivo selecionado: <strong>{mediaFile.name}</strong>
                 </p>
-                {mediaFile.type.startsWith('audio/') ? (
+                {inferMediaKindFromFile(mediaFile) === 'audio' ? (
                   <audio controls src={mediaPreview} preload="metadata" />
                 ) : (
                   <img src={mediaPreview} alt="Previa de imagem" />
@@ -4112,7 +4229,7 @@ function App() {
                   ref={storyMediaInputRef}
                   type="file"
                   className="file-native"
-                  accept="image/*,audio/*"
+                  accept="image/*,audio/*,.mp3,.m4a,.wav,.ogg,.aac,.flac,.webm,.opus,.jpg,.jpeg,.png,.webp,.gif,.avif,.heic,.heif"
                   onChange={onSelectStoryMedia}
                 />
                 {storyMediaFile && (
@@ -4127,7 +4244,7 @@ function App() {
                   <p>
                     Arquivo selecionado: <strong>{storyMediaFile.name}</strong>
                   </p>
-                  {storyMediaFile.type.startsWith('audio/') ? (
+                  {inferMediaKindFromFile(storyMediaFile) === 'audio' ? (
                     <audio controls src={storyMediaPreview} preload="metadata" />
                   ) : (
                     <img src={storyMediaPreview} alt="Preview do story" />
