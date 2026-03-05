@@ -24,6 +24,7 @@ import {
   fetchActiveStories,
   fetchLatestSpotifyCapsule,
   fetchSpotifyCapsuleLeaderboard,
+  fetchCommunitySpotifyLeaderboards,
   fetchSpotifyConnection,
   fetchCommunities,
   fetchDirectThreads,
@@ -731,6 +732,44 @@ function buildLocalSpotifyCapsuleLeaderboard(currentUser) {
   ]
 }
 
+const localCommunityPeriodScoreBoost = {
+  '4_weeks': 1,
+  '6_months': 1.08,
+  all_time: 1.15,
+}
+
+function buildLocalCommunityLeaderboards({ communities = [], currentUser, period = '4_weeks', limit = 3 }) {
+  const baseEntries = buildLocalSpotifyCapsuleLeaderboard(currentUser).filter((entry) => entry.period === '4_weeks')
+  const boost = localCommunityPeriodScoreBoost[period] || 1
+  const safeLimit = Math.max(1, Math.min(8, Number(limit) || 3))
+
+  return Object.fromEntries(
+    (communities || []).map((community) => {
+      const communitySeed = String(community?.id || '')
+        .split('')
+        .reduce((acc, char) => acc + char.charCodeAt(0), 0)
+
+      const entries = baseEntries
+        .map((entry, index) => {
+          const spread = ((communitySeed + index * 11) % 27) - 13
+          return {
+            ...entry,
+            period,
+            score: Math.max(0, Math.round(entry.score * boost + spread)),
+          }
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, safeLimit)
+        .map((entry, index) => ({
+          ...entry,
+          rank: index + 1,
+        }))
+
+      return [community.id, entries]
+    }),
+  )
+}
+
 function NavIcon({ name, active = false }) {
   const strokeWidth = active ? 2.15 : 1.9
   const props = {
@@ -879,6 +918,9 @@ function App() {
   const [communities, setCommunities] = useState(isSupabaseConfigured ? [] : buildLocalCommunityCards)
   const [loadingCommunities, setLoadingCommunities] = useState(false)
   const [creatingCommunity, setCreatingCommunity] = useState(false)
+  const [communityRankPeriod, setCommunityRankPeriod] = useState('4_weeks')
+  const [communityRankingsById, setCommunityRankingsById] = useState({})
+  const [loadingCommunityRankings, setLoadingCommunityRankings] = useState(false)
   const [communityDraft, setCommunityDraft] = useState({
     name: '',
     description: '',
@@ -1245,6 +1287,49 @@ function App() {
     }
   }, [])
 
+  const loadCommunityRankings = useCallback(
+    async (userId, options = {}) => {
+      const period = options.period || communityRankPeriod
+      const sourceCommunities = Array.isArray(options.communities) ? options.communities : communities
+      const safeCommunities = (sourceCommunities || []).filter((community) => Boolean(community?.id))
+      const communityIds = safeCommunities.map((community) => community.id)
+
+      if (!userId || communityIds.length === 0) {
+        setCommunityRankingsById({})
+        setLoadingCommunityRankings(false)
+        return
+      }
+
+      if (!isSupabaseConfigured) {
+        setCommunityRankingsById(
+          buildLocalCommunityLeaderboards({
+            communities: safeCommunities,
+            currentUser,
+            period,
+            limit: 3,
+          }),
+        )
+        setLoadingCommunityRankings(false)
+        return
+      }
+
+      setLoadingCommunityRankings(true)
+      try {
+        const rankingByCommunity = await fetchCommunitySpotifyLeaderboards({
+          communityIds,
+          period,
+          limit: 3,
+        })
+        setCommunityRankingsById(rankingByCommunity || {})
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Falha ao carregar ranking das comunidades.'))
+      } finally {
+        setLoadingCommunityRankings(false)
+      }
+    },
+    [communities, communityRankPeriod, currentUser],
+  )
+
   const loadPlaylists = useCallback(async (userId) => {
     if (!isSupabaseConfigured || !userId) {
       setPlaylists(buildLocalPlaylistCards())
@@ -1596,6 +1681,8 @@ function App() {
         setActiveDirectThreadId('')
         setPeopleToFollow(buildLocalPeople())
         setCommunities(buildLocalCommunityCards())
+        setCommunityRankingsById({})
+        setLoadingCommunityRankings(false)
         setPlaylists(buildLocalPlaylistCards())
         setSpotifyCapsuleConnection(null)
         setSpotifyCapsuleMine(null)
@@ -1678,6 +1765,16 @@ function App() {
 
     void loadSpotifyCapsule(currentUser.id, spotifyCapsulePeriod)
   }, [currentUser?.id, loadSpotifyCapsule, spotifyCapsulePeriod])
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setCommunityRankingsById({})
+      setLoadingCommunityRankings(false)
+      return
+    }
+
+    void loadCommunityRankings(currentUser.id, { period: communityRankPeriod })
+  }, [communities, communityRankPeriod, currentUser?.id, loadCommunityRankings])
 
   useEffect(() => {
     if (!isSupabaseConfigured || !currentUser?.id || typeof window === 'undefined') {
@@ -4107,6 +4204,18 @@ function App() {
                 <h2>Comunidades em alta</h2>
                 <p>Entre em grupos para trocar feedback e collabs.</p>
               </header>
+              <div className="community-ranking-periods">
+                {spotifyCapsulePeriods.map((periodOption) => (
+                  <button
+                    type="button"
+                    key={`community-rank-period-${periodOption.id}`}
+                    className={communityRankPeriod === periodOption.id ? 'secondary-btn followed' : 'secondary-btn'}
+                    onClick={() => setCommunityRankPeriod(periodOption.id)}
+                  >
+                    Top {periodOption.label}
+                  </button>
+                ))}
+              </div>
               <form className="mode-create-form" onSubmit={submitCommunity}>
                 <div className="mode-create-grid">
                   <input
@@ -4138,6 +4247,7 @@ function App() {
               <div className="mode-board-grid">
                 {communities.map((community) => {
                   const joined = Boolean(community.joined)
+                  const communityRanking = communityRankingsById[community.id] || []
                   return (
                     <article
                       key={community.id}
@@ -4151,6 +4261,32 @@ function App() {
                       <span>
                         {compact(community.members || 0)} membros • @{normalizeHandle(community.creatorHandle || 'comunidade')}
                       </span>
+                      <div className="community-leaderboard">
+                        <strong className="community-leaderboard-title">
+                          Top ouvintes ({capsulePeriodLabel(communityRankPeriod)})
+                        </strong>
+                        {loadingCommunityRankings ? (
+                          <p className="community-leaderboard-empty">Carregando ranking...</p>
+                        ) : communityRanking.length > 0 ? (
+                          <ul className="community-leaderboard-list">
+                            {communityRanking.map((entry, index) => (
+                              <li key={`${community.id}-rank-${entry.userId || entry.id || index}`}>
+                                <span className="community-rank-pos">#{entry.rank || index + 1}</span>
+                                <div className="community-rank-user">
+                                  <strong>{entry.user?.name || 'Usuario'}</strong>
+                                  <p>@{normalizeHandle(entry.user?.handle || 'usuario')}</p>
+                                </div>
+                                <div className="community-rank-score">
+                                  <strong>{compact(entry.score || 0)}</strong>
+                                  <span>pts</span>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="community-leaderboard-empty">Sem ranking nesta comunidade ainda.</p>
+                        )}
+                      </div>
                       <button
                         type="button"
                         className={joined ? 'secondary-btn followed' : 'secondary-btn'}
@@ -4238,7 +4374,7 @@ function App() {
                       <span>
                         {compact(playlist.saves || 0)} salvos • @{normalizeHandle(playlist.creatorHandle || 'usuario')}
                       </span>
-                      <div className="mode-card-actions">
+                      <div className="mode-card-actions mode-card-actions-playlist">
                         <button
                           type="button"
                           className={saved ? 'secondary-btn followed' : 'secondary-btn'}

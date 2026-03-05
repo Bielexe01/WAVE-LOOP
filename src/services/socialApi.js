@@ -1030,6 +1030,106 @@ export async function toggleCommunityMembership({ communityId, userId }) {
   }
 }
 
+export async function fetchCommunitySpotifyLeaderboards({ communityIds = [], period = '4_weeks', limit = 3 }) {
+  const client = requireSupabase()
+  const safeCommunityIds = Array.from(new Set((communityIds || []).filter(Boolean))).slice(0, 80)
+  const safeLimit = Math.max(1, Math.min(10, limit))
+  const normalizedPeriod = normalizeCapsulePeriod(period)
+
+  if (!safeCommunityIds.length) {
+    return {}
+  }
+
+  const { data: membershipsRows, error: membershipsError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id')
+    .in('community_id', safeCommunityIds)
+
+  if (membershipsError) {
+    if (isMissingCommunityRelation(membershipsError)) {
+      return {}
+    }
+    throw membershipsError
+  }
+
+  const memberRows = membershipsRows || []
+  const usersByCommunity = new Map()
+  for (const row of memberRows) {
+    const current = usersByCommunity.get(row.community_id) || []
+    current.push(row.user_id)
+    usersByCommunity.set(row.community_id, current)
+  }
+
+  const allUserIds = Array.from(new Set(memberRows.map((row) => row.user_id)))
+  if (!allUserIds.length) {
+    return Object.fromEntries(safeCommunityIds.map((communityId) => [communityId, []]))
+  }
+
+  const { data: snapshotRows, error: snapshotsError } = await client
+    .from('spotify_capsule_snapshots')
+    .select(
+      `
+      id,
+      user_id,
+      period,
+      score,
+      top_tracks,
+      top_artists,
+      recent_plays,
+      minutes_estimate,
+      created_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('period', normalizedPeriod)
+    .in('user_id', allUserIds)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(300, allUserIds.length * 4))
+
+  if (snapshotsError) {
+    if (isMissingSpotifyCapsuleRelation(snapshotsError)) {
+      return Object.fromEntries(safeCommunityIds.map((communityId) => [communityId, []]))
+    }
+    throw snapshotsError
+  }
+
+  const latestByUser = new Map()
+  for (const row of snapshotRows || []) {
+    if (!latestByUser.has(row.user_id)) {
+      latestByUser.set(row.user_id, row)
+    }
+  }
+
+  const leaderboardByCommunity = {}
+  for (const communityId of safeCommunityIds) {
+    const userIds = usersByCommunity.get(communityId) || []
+    const entries = userIds
+      .map((userId) => latestByUser.get(userId))
+      .filter(Boolean)
+      .map((row) => mapSpotifyCapsuleSnapshot(row))
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score
+        }
+        return new Date(b.createdAt) - new Date(a.createdAt)
+      })
+      .slice(0, safeLimit)
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1,
+      }))
+
+    leaderboardByCommunity[communityId] = entries
+  }
+
+  return leaderboardByCommunity
+}
+
 export async function fetchSpotifyPlaylists({ userId = '', limit = 40 }) {
   const client = requireSupabase()
   const safeLimit = Math.max(1, Math.min(80, limit))

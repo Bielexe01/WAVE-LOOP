@@ -846,6 +846,106 @@
   gap: 0.42rem;
 }
 
+.mode-card-actions-playlist {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mode-card-actions-playlist > :last-child {
+  grid-column: 1 / -1;
+}
+
+.mode-card-actions-playlist .secondary-btn,
+.mode-card-actions-playlist .mode-link-btn {
+  height: auto;
+  min-height: 2.3rem;
+  padding: 0.45rem 0.56rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.community-ranking-periods {
+  margin-top: 0.44rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.community-leaderboard {
+  margin-top: 0.28rem;
+  padding-top: 0.42rem;
+  border-top: 1px dashed rgba(120, 152, 220, 0.32);
+  display: grid;
+  gap: 0.34rem;
+}
+
+.community-leaderboard-title {
+  color: #b6cff0;
+  font-size: 0.76rem;
+}
+
+.community-leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.community-leaderboard-list li {
+  border-radius: 0.66rem;
+  border: 1px solid rgba(122, 153, 221, 0.3);
+  background: rgba(8, 14, 28, 0.5);
+  padding: 0.38rem 0.45rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.community-rank-pos {
+  color: #8aa8d5;
+  font-size: 0.72rem;
+}
+
+.community-rank-user strong {
+  display: block;
+  color: #eef7ff;
+  font-size: 0.81rem;
+  line-height: 1.1;
+}
+
+.community-rank-user p {
+  margin: 0.06rem 0 0;
+  color: #88a2cb;
+  font-size: 0.72rem;
+}
+
+.community-rank-score {
+  text-align: right;
+}
+
+.community-rank-score strong {
+  display: block;
+  color: #f2f9ff;
+  font-size: 0.8rem;
+}
+
+.community-rank-score span {
+  color: #89a4ce;
+  font-size: 0.68rem;
+}
+
+.community-leaderboard-empty {
+  margin: 0;
+  color: #8ba4cc;
+  font-size: 0.74rem;
+}
+
 .mode-link-btn {
   text-decoration: none;
   display: inline-flex;
@@ -2464,6 +2564,10 @@
     grid-template-columns: 1fr;
   }
 
+  .mode-card-actions-playlist > :last-child {
+    grid-column: auto;
+  }
+
   .trend-strip,
   .hero,
   .composer,
@@ -3617,6 +3721,52 @@
 
 .scene-root.theme-clean .theme-icon-toggle::after {
   border-color: rgba(255, 255, 255, 0.52);
+}
+
+.scene-root.theme-clean .mode-create-grid input,
+.scene-root.theme-clean .mode-create-color,
+.scene-root.theme-clean .spotify-capsule-board,
+.scene-root.theme-clean .spotify-capsule-connection,
+.scene-root.theme-clean .spotify-capsule-mine,
+.scene-root.theme-clean .spotify-rank-row,
+.scene-root.theme-clean .community-leaderboard-list li {
+  background: #ffffff;
+  border-color: #dbdbdb;
+  color: #111111;
+}
+
+.scene-root.theme-clean .mode-create-grid input::placeholder {
+  color: #7b7b7b;
+}
+
+.scene-root.theme-clean .mode-create-color {
+  color: #3f3f46;
+}
+
+.scene-root.theme-clean .mode-create-color input {
+  background: transparent;
+}
+
+.scene-root.theme-clean .spotify-capsule-head h3,
+.scene-root.theme-clean .spotify-rank-user strong,
+.scene-root.theme-clean .spotify-rank-score strong,
+.scene-root.theme-clean .spotify-capsule-connection strong,
+.scene-root.theme-clean .community-rank-user strong,
+.scene-root.theme-clean .community-rank-score strong,
+.scene-root.theme-clean .community-leaderboard-title {
+  color: #111111;
+}
+
+.scene-root.theme-clean .spotify-capsule-head p,
+.scene-root.theme-clean .spotify-capsule-connection p,
+.scene-root.theme-clean .spotify-capsule-metrics span,
+.scene-root.theme-clean .spotify-capsule-top,
+.scene-root.theme-clean .spotify-rank-user p,
+.scene-root.theme-clean .spotify-rank-score span,
+.scene-root.theme-clean .community-rank-user p,
+.scene-root.theme-clean .community-rank-score span,
+.scene-root.theme-clean .community-leaderboard-empty {
+  color: #6b7280;
 }
 
 .scene-root.theme-dark {
@@ -5548,7 +5698,8 @@
 .scene-root.theme-dark .suggestion-list li,
 .scene-root.theme-dark .profile-ig-list-item,
 .scene-root.theme-dark .profile-ig-grid-item,
-.scene-root.theme-dark .profile-ig-highlight-circle {
+.scene-root.theme-dark .profile-ig-highlight-circle,
+.scene-root.theme-dark .community-leaderboard-list li {
   background: var(--ig-surface-muted) !important;
   border-color: #2f476b !important;
 }
@@ -5580,9 +5731,18 @@
 .scene-root.theme-dark .rank-list p,
 .scene-root.theme-dark .event-list p,
 .scene-root.theme-dark .suggestion-list p,
+.scene-root.theme-dark .community-rank-user p,
+.scene-root.theme-dark .community-rank-score span,
+.scene-root.theme-dark .community-leaderboard-empty,
 .scene-root.theme-dark .story-item,
 .scene-root.theme-dark .trend-card p {
   color: var(--ig-muted) !important;
+}
+
+.scene-root.theme-dark .community-rank-user strong,
+.scene-root.theme-dark .community-rank-score strong,
+.scene-root.theme-dark .community-leaderboard-title {
+  color: var(--ig-text) !important;
 }
 
 .scene-root.theme-dark .profile-ig-tabs {
