@@ -495,14 +495,89 @@ const heroCountLabels = {
   Perfil: 'posts do seu perfil',
 }
 
+function NavIcon({ name, active = false }) {
+  const strokeWidth = active ? 2.15 : 1.9
+  const props = {
+    width: 21,
+    height: 21,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+  }
+
+  switch (name) {
+    case 'home':
+      return (
+        <svg {...props}>
+          <path d="M3 10.5L12 3l9 7.5" />
+          <path d="M5 9.5V20h14V9.5" />
+        </svg>
+      )
+    case 'compass':
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="m10 10 7-3-3 7-7 3z" />
+        </svg>
+      )
+    case 'direct':
+      return (
+        <svg {...props}>
+          <path d="M4 5h16v11H9l-5 4V5z" />
+        </svg>
+      )
+    case 'group':
+      return (
+        <svg {...props}>
+          <circle cx="9" cy="8.2" r="2.8" />
+          <circle cx="17" cy="9.3" r="2.2" />
+          <path d="M3.5 19c.8-2.4 3.1-4 5.6-4 2.6 0 4.8 1.6 5.7 4" />
+          <path d="M14.8 17.8c.5-1.4 1.8-2.5 3.3-3" />
+        </svg>
+      )
+    case 'event':
+      return (
+        <svg {...props}>
+          <rect x="3" y="5" width="18" height="16" rx="2.4" />
+          <path d="M8 3v4M16 3v4M3 10h18" />
+        </svg>
+      )
+    case 'music':
+      return (
+        <svg {...props}>
+          <path d="M10 18V7l9-2v11" />
+          <circle cx="8" cy="18" r="3" />
+          <circle cx="18" cy="16" r="3" />
+        </svg>
+      )
+    case 'profile':
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="8.3" r="3.6" />
+          <path d="M4 20c1.6-3.5 4.1-5 8-5s6.4 1.5 8 5" />
+        </svg>
+      )
+    default:
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="8.5" />
+        </svg>
+      )
+  }
+}
+
 const navPresentation = {
-  Feed: { label: 'Inicio', mobile: 'Inicio', icon: 'In' },
-  Descobrir: { label: 'Explorar', mobile: 'Explorar', icon: 'Ex' },
-  Direct: { label: 'Mensagens', mobile: 'Direct', icon: 'Dm' },
-  Comunidades: { label: 'Comunidades', mobile: 'Grupos', icon: 'Co' },
-  Eventos: { label: 'Eventos', mobile: 'Eventos', icon: 'Ev' },
-  Playlists: { label: 'Playlists', mobile: 'Mixes', icon: 'Pl' },
-  Perfil: { label: 'Perfil', mobile: 'Perfil', icon: 'Eu' },
+  Feed: { label: 'Inicio', mobile: 'Inicio', icon: 'home' },
+  Descobrir: { label: 'Explorar', mobile: 'Explorar', icon: 'compass' },
+  Direct: { label: 'Mensagens', mobile: 'Direct', icon: 'direct' },
+  Comunidades: { label: 'Comunidades', mobile: 'Grupos', icon: 'group' },
+  Eventos: { label: 'Eventos', mobile: 'Eventos', icon: 'event' },
+  Playlists: { label: 'Playlists', mobile: 'Mixes', icon: 'music' },
+  Perfil: { label: 'Perfil', mobile: 'Perfil', icon: 'profile' },
 }
 
 function App() {
@@ -514,6 +589,7 @@ function App() {
   const [loadingFeed, setLoadingFeed] = useState(false)
   const [loadingUserSearch, setLoadingUserSearch] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [showComposer, setShowComposer] = useState(false)
   const [statusMessage, setStatusMessage] = useState(
     isSupabaseConfigured
       ? ''
@@ -1939,6 +2015,7 @@ function App() {
 
       setComposer({ text: '', track: '', artist: '', spotifyUrl: '', mood: moods[0] })
       clearComposerMedia()
+      setShowComposer(false)
       setStatusMessage('Post publicado com sucesso.')
     } catch (error) {
       setErrorMessage(toMessage(error, 'Nao foi possivel publicar o post.'))
@@ -1946,6 +2023,12 @@ function App() {
       setPublishing(false)
     }
   }
+
+  useEffect(() => {
+    if (activeNav !== 'Feed' || publicProfile) {
+      setShowComposer(false)
+    }
+  }, [activeNav, publicProfile])
 
   const toggleReaction = async (postId, kind) => {
     if (!currentUser) {
@@ -2412,7 +2495,10 @@ function App() {
 
   const goToComposer = () => {
     activateNav('Feed')
-    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setShowComposer(true)
+    requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   const focusCommentInput = (postId) => {
@@ -2431,6 +2517,7 @@ function App() {
       track: track.title,
       artist: track.artist,
     }))
+    setShowComposer(true)
     setStatusMessage(`Faixa pronta no composer: ${track.title} - ${track.artist}`)
     setErrorMessage('')
   }
@@ -2556,18 +2643,21 @@ function App() {
               const meta = navPresentation[item] || {
                 label: item,
                 mobile: item,
-                icon: item.slice(0, 2).toUpperCase(),
+                icon: 'home',
               }
+              const isActive = activeNav === item
 
               return (
                 <button
                   type="button"
                   key={item}
-                  className={activeNav === item ? 'nav-item active' : 'nav-item'}
+                  className={isActive ? 'nav-item active' : 'nav-item'}
                   onClick={() => activateNav(item)}
                 >
                   <span className="nav-main">
-                    <span className="nav-icon">{meta.icon}</span>
+                    <span className="nav-icon">
+                      <NavIcon name={meta.icon} active={isActive} />
+                    </span>
                     <span className="nav-text">{meta.label}</span>
                   </span>
                   {item === 'Direct' && totalDirectUnread > 0 && <span className="nav-badge">{compact(totalDirectUnread)}</span>}
@@ -2628,7 +2718,7 @@ function App() {
         </aside>
 
         <main className="main-column">
-          {activeNav !== 'Direct' && (
+          {activeNav !== 'Direct' && activeNav !== 'Feed' && !publicProfile && (
           <section className="top-strip appear-up" onMouseMove={handleInteractiveMove} onMouseLeave={clearInteractiveMove}>
             <div className="search-shell">
               <label htmlFor="global-search">Buscar posts e usuarios</label>
@@ -2737,6 +2827,23 @@ function App() {
           )}
 
           {activeNav === 'Feed' && !publicProfile && (
+            <>
+            <section className="feed-inline-header appear-up">
+              <h2>Feed</h2>
+              <div className="feed-inline-actions">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setShowComposer((current) => !current)}
+                >
+                  {showComposer ? 'Fechar post' : 'Criar post'}
+                </button>
+                <button type="button" className="secondary-btn" onClick={() => activateNav('Direct')}>
+                  Mensagens
+                </button>
+              </div>
+            </section>
+
             <section className="stories-strip appear-up delay-1" aria-label="Stories">
               <header className="stories-head">
                 <h3>Stories</h3>
@@ -2802,6 +2909,7 @@ function App() {
                 </ul>
               )}
             </section>
+            </>
           )}
 
           {activeNav === 'Comunidades' && !publicProfile && (
@@ -3101,7 +3209,7 @@ function App() {
             </section>
           )}
 
-          {!publicProfile && activeNav === 'Feed' && (
+          {!publicProfile && activeNav === 'Feed' && showComposer && (
             <section ref={composerRef} id="composer" className="composer appear-up delay-2" aria-label="Criar post">
             <h2>Publicar agora</h2>
             <textarea
@@ -3214,7 +3322,7 @@ function App() {
             </section>
           )}
 
-          {activeNav !== 'Direct' && (
+          {(publicProfile || activeNav === 'Feed' || activeNav === 'Descobrir') && (
           <section className="feed-list" aria-label="Feed de posts">
             {loadingFeed && <div className="notice">Carregando feed...</div>}
 
@@ -3874,17 +3982,31 @@ function App() {
       )}
 
       <nav className="mobile-tabbar" aria-label="Navegacao mobile">
-        {navItems.map((item) => (
-          <button
-            type="button"
-            key={`mobile-${item}`}
-            className={activeNav === item ? 'mobile-tab active' : 'mobile-tab'}
-            onClick={() => activateNav(item)}
-            title={item}
-          >
-            {(navPresentation[item] && navPresentation[item].mobile) || item}
-          </button>
-        ))}
+        {navItems.map((item) => {
+          const meta = navPresentation[item] || { label: item, mobile: item, icon: 'home' }
+          const isActive = activeNav === item
+
+          return (
+            <button
+              type="button"
+              key={`mobile-${item}`}
+              className={isActive ? 'mobile-tab active' : 'mobile-tab'}
+              onClick={() => activateNav(item)}
+              title={meta.mobile}
+              aria-label={meta.label}
+            >
+              <span className="mobile-tab-icon">
+                <NavIcon name={meta.icon} active={isActive} />
+              </span>
+              <span className="mobile-tab-label">{meta.mobile}</span>
+              {item === 'Direct' && totalDirectUnread > 0 && (
+                <span className="mobile-tab-badge" aria-label={`${compact(totalDirectUnread)} mensagens nao lidas`}>
+                  {compact(totalDirectUnread)}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </nav>
     </div>
   )
