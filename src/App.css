@@ -4793,34 +4793,54 @@
 
 /* ---------- Desktop sidebars always visible ---------- */
 @media (min-width: 981px) {
-  .app-shell {
+  .scene-root:not(.is-direct-fullscreen) .app-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0.75rem 0 1rem;
     align-items: start;
+    grid-template-columns: minmax(224px, 248px) minmax(0, 1fr) minmax(264px, 304px);
+    gap: 0;
   }
 
-  .left-panel,
-  .right-panel {
+  .scene-root:not(.is-direct-fullscreen) .left-panel,
+  .scene-root:not(.is-direct-fullscreen) .right-panel {
     position: sticky;
-    top: 0.9rem;
-    height: calc(100vh - 1.8rem);
-    max-height: calc(100vh - 1.8rem);
+    top: 0.75rem;
+    height: calc(100vh - 1.5rem);
+    max-height: calc(100vh - 1.5rem);
     overflow: auto;
   }
 
-  .left-panel {
+  .scene-root:not(.is-direct-fullscreen) .left-panel {
     display: flex;
     flex-direction: column;
+    justify-self: start;
   }
 
-  .right-panel {
+  .scene-root:not(.is-direct-fullscreen) .right-panel {
     display: block;
+    justify-self: end;
+  }
+
+  .scene-root:not(.is-direct-fullscreen) .main-column {
+    width: min(100%, 680px);
+    max-width: 680px;
+    justify-self: center;
+    padding-inline: 0.95rem;
   }
 }
 
 @media (min-width: 981px) and (max-width: 1260px) {
-  .app-shell {
-    width: min(1200px, calc(100% - 1.2rem));
-    grid-template-columns: minmax(200px, 220px) minmax(0, 1fr) minmax(220px, 250px);
+  .scene-root:not(.is-direct-fullscreen) .app-shell {
+    grid-template-columns: minmax(206px, 228px) minmax(0, 1fr) minmax(220px, 248px);
     gap: 1rem;
+  }
+
+  .scene-root:not(.is-direct-fullscreen) .main-column {
+    width: min(100%, 640px);
+    max-width: 640px;
+    padding-inline: 0.72rem;
   }
 }
 
