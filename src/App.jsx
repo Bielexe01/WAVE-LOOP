@@ -572,7 +572,11 @@ const heroCountLabels = {
   Perfil: 'posts do seu perfil',
 }
 
-const spotifyCapsuleClientId = String(import.meta.env.VITE_SPOTIFY_CLIENT_ID || '').trim()
+const spotifyCapsuleClientId = String(
+  import.meta.env.VITE_SPOTIFY_CLIENT_ID ||
+    (typeof window !== 'undefined' ? window.localStorage.getItem('waveloop:spotify-client-id') : '') ||
+    '',
+).trim()
 const spotifyCapsuleRedirectUri =
   String(import.meta.env.VITE_SPOTIFY_REDIRECT_URI || '').trim() ||
   (typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : '')
@@ -3307,7 +3311,20 @@ function App() {
     }
 
     if (!spotifyCapsuleClientId) {
-      setErrorMessage('Defina VITE_SPOTIFY_CLIENT_ID no .env para ativar conexao Spotify.')
+      const typedClientId =
+        typeof window !== 'undefined'
+          ? window.prompt('Cole seu Spotify Client ID para ativar a conexao:')?.trim() || ''
+          : ''
+
+      if (typedClientId) {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('waveloop:spotify-client-id', typedClientId)
+          window.location.reload()
+        }
+        return
+      }
+
+      setErrorMessage('Defina VITE_SPOTIFY_CLIENT_ID no .env (ou informe o Client ID no prompt).')
       return
     }
 
