@@ -410,6 +410,69 @@ const playlistCards = [
   },
 ]
 
+const spotifyPickerLibrary = [
+  {
+    id: 'sp-track-1',
+    title: 'Blinding Lights',
+    subtitle: 'The Weeknd',
+    url: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
+  },
+  {
+    id: 'sp-track-2',
+    title: 'As It Was',
+    subtitle: 'Harry Styles',
+    url: 'https://open.spotify.com/track/4LRPiXqCikLlN15c3yImP7',
+  },
+  {
+    id: 'sp-track-3',
+    title: 'good 4 u',
+    subtitle: 'Olivia Rodrigo',
+    url: 'https://open.spotify.com/track/4ZtFanR9U6ndgddUvNcjcG',
+  },
+  {
+    id: 'sp-track-4',
+    title: 'Dance The Night',
+    subtitle: 'Dua Lipa',
+    url: 'https://open.spotify.com/track/11C4y2Yz1XbHmaQ3m0KnRO',
+  },
+  {
+    id: 'sp-album-1',
+    title: 'SOS',
+    subtitle: 'SZA',
+    url: 'https://open.spotify.com/album/1nrVofqDRs7cpWXJ49qTnP',
+  },
+  {
+    id: 'sp-album-2',
+    title: 'After Hours',
+    subtitle: 'The Weeknd',
+    url: 'https://open.spotify.com/album/4yP0hdKOZPNshxUOjY0cZj',
+  },
+  {
+    id: 'sp-playlist-1',
+    title: 'Today’s Top Hits',
+    subtitle: 'Spotify',
+    url: 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
+  },
+  {
+    id: 'sp-playlist-2',
+    title: 'RapCaviar',
+    subtitle: 'Spotify',
+    url: 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd',
+  },
+  {
+    id: 'sp-playlist-3',
+    title: 'Chill Hits',
+    subtitle: 'Spotify',
+    url: 'https://open.spotify.com/playlist/37i9dQZF1DX4WYpdgoIcn6',
+  },
+  {
+    id: 'sp-playlist-4',
+    title: 'lofi beats',
+    subtitle: 'Spotify',
+    url: 'https://open.spotify.com/playlist/37i9dQZF1DWWQRwui0ExPn',
+  },
+]
+
 const heroCountLabels = {
   Feed: 'posts no feed',
   Descobrir: 'posts em destaque',
@@ -499,6 +562,9 @@ function App() {
     spotifyUrl: '',
     mood: moods[0],
   })
+  const [spotifyPickerOpen, setSpotifyPickerOpen] = useState(false)
+  const [spotifyPickerQuery, setSpotifyPickerQuery] = useState('')
+  const [spotifyManualUrl, setSpotifyManualUrl] = useState('')
   const [mediaFile, setMediaFile] = useState(null)
   const [mediaPreview, setMediaPreview] = useState('')
   const [commentDrafts, setCommentDrafts] = useState({})
@@ -591,6 +657,22 @@ function App() {
       return true
     })
   }, [currentUser, peopleToFollow, posts])
+
+  const selectedSpotify = useMemo(() => {
+    return parseSpotifyUrl(composer.spotifyUrl)
+  }, [composer.spotifyUrl])
+
+  const filteredSpotifyLibrary = useMemo(() => {
+    const query = spotifyPickerQuery.trim().toLowerCase()
+    if (!query) {
+      return spotifyPickerLibrary
+    }
+
+    return spotifyPickerLibrary.filter((item) => {
+      const haystack = `${item.title} ${item.subtitle}`.toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [spotifyPickerQuery])
 
   const activeDirectThread = useMemo(() => {
     return (
@@ -1053,6 +1135,33 @@ function App() {
       fileInputRef.current.value = ''
     }
   }, [mediaPreview])
+
+  const openSpotifyPicker = useCallback(() => {
+    setSpotifyPickerOpen(true)
+    setSpotifyPickerQuery('')
+    setSpotifyManualUrl(composer.spotifyUrl || '')
+  }, [composer.spotifyUrl])
+
+  const closeSpotifyPicker = useCallback(() => {
+    setSpotifyPickerOpen(false)
+    setSpotifyPickerQuery('')
+  }, [])
+
+  const chooseSpotifyUrl = useCallback(
+    (url) => {
+      const parsed = parseSpotifyUrl(url)
+      if (!parsed) {
+        setErrorMessage('Link do Spotify invalido.')
+        return
+      }
+
+      setComposer((current) => ({ ...current, spotifyUrl: parsed.url }))
+      setSpotifyManualUrl(parsed.url)
+      setSpotifyPickerOpen(false)
+      setStatusMessage(`Spotify selecionado: ${parsed.type}.`)
+    },
+    [setComposer],
+  )
 
   const mutatePostEverywhere = useCallback((postId, recipe) => {
     setPosts((current) => current.map((post) => (post.id === postId ? recipe(post) : post)))
@@ -3018,12 +3127,37 @@ function App() {
               </button>
             </div>
 
-            <input
-              value={composer.spotifyUrl}
-              onChange={(event) => handleComposer('spotifyUrl', event.target.value)}
-              type="url"
-              placeholder="Link do Spotify (track/playlist/album/artista)"
-            />
+            <div className="spotify-picker-row">
+              <button type="button" className="secondary-btn" onClick={openSpotifyPicker}>
+                {selectedSpotify ? 'Trocar Spotify' : 'Escolher no Spotify'}
+              </button>
+              {selectedSpotify && (
+                <>
+                  <span className="spotify-selected-kind">{selectedSpotify.type}</span>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => {
+                      handleComposer('spotifyUrl', '')
+                      setSpotifyManualUrl('')
+                    }}
+                  >
+                    Remover
+                  </button>
+                </>
+              )}
+            </div>
+
+            {selectedSpotify && (
+              <div className="spotify-card composer-spotify-preview">
+                <iframe
+                  src={selectedSpotify.embedUrl}
+                  title={`Spotify selecionado ${selectedSpotify.type}`}
+                  loading="lazy"
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                />
+              </div>
+            )}
 
             <div className="media-input-row">
               <label className="file-pill" htmlFor="composer-file">
@@ -3547,6 +3681,82 @@ function App() {
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {spotifyPickerOpen && (
+        <div className="modal-overlay" role="presentation" onClick={closeSpotifyPicker}>
+          <section
+            className="spotify-picker-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Escolher conteudo do Spotify"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="profile-editor-head">
+              <h2>Escolher no Spotify</h2>
+              <button type="button" className="secondary-btn" onClick={closeSpotifyPicker}>
+                Fechar
+              </button>
+            </header>
+
+            <div className="spotify-picker-tools">
+              <input
+                type="search"
+                value={spotifyPickerQuery}
+                onChange={(event) => setSpotifyPickerQuery(event.target.value)}
+                placeholder="Filtrar por nome (tracks, playlists, albums)"
+              />
+              <a href="https://open.spotify.com/search" target="_blank" rel="noreferrer">
+                Abrir busca Spotify
+              </a>
+            </div>
+
+            <div className="spotify-picker-grid">
+              {filteredSpotifyLibrary.map((item) => {
+                const parsed = parseSpotifyUrl(item.url)
+                if (!parsed) {
+                  return null
+                }
+
+                return (
+                  <article key={item.id} className="spotify-picker-item">
+                    <iframe
+                      src={parsed.embedUrl}
+                      title={`${item.title} ${item.subtitle}`}
+                      loading="lazy"
+                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                    />
+                    <div className="spotify-picker-meta">
+                      <strong>{item.title}</strong>
+                      <p>{item.subtitle}</p>
+                    </div>
+                    <button type="button" className="primary-btn" onClick={() => chooseSpotifyUrl(item.url)}>
+                      Usar no post
+                    </button>
+                  </article>
+                )
+              })}
+
+              {filteredSpotifyLibrary.length === 0 && <div className="notice">Nenhum resultado com esse filtro.</div>}
+            </div>
+
+            <div className="spotify-manual">
+              <label htmlFor="spotify-manual-url">Ou cole um link do Spotify</label>
+              <div>
+                <input
+                  id="spotify-manual-url"
+                  type="url"
+                  value={spotifyManualUrl}
+                  onChange={(event) => setSpotifyManualUrl(event.target.value)}
+                  placeholder="https://open.spotify.com/track/..."
+                />
+                <button type="button" className="secondary-btn" onClick={() => chooseSpotifyUrl(spotifyManualUrl)}>
+                  Usar link
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       )}

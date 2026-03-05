@@ -3220,6 +3220,133 @@
   text-decoration: underline;
 }
 
+.spotify-picker-row {
+  margin-top: 0.64rem;
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  flex-wrap: wrap;
+}
+
+.spotify-selected-kind {
+  border-radius: 999px;
+  border: 1px solid #bfe0ff;
+  background: #edf6ff;
+  color: #0057a3;
+  padding: 0.22rem 0.56rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.composer-spotify-preview {
+  margin-top: 0.52rem;
+}
+
+.spotify-picker-modal {
+  width: min(980px, 100%);
+  max-height: min(92vh, 860px);
+  border-radius: 1.05rem;
+  border: 1px solid var(--ig-border, #dbdbdb);
+  background: #ffffff;
+  padding: 0.86rem;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 0.68rem;
+  overflow: hidden;
+}
+
+.spotify-picker-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.58rem;
+}
+
+.spotify-picker-tools input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #dbdbdb;
+  border-radius: 0.78rem;
+  background: #ffffff;
+  color: #111111;
+  padding: 0.58rem 0.68rem;
+}
+
+.spotify-picker-tools a {
+  white-space: nowrap;
+  color: #0095f6;
+  font-weight: 700;
+  text-decoration: none;
+  font-size: 0.82rem;
+}
+
+.spotify-picker-tools a:hover {
+  text-decoration: underline;
+}
+
+.spotify-picker-grid {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+  padding-right: 0.15rem;
+}
+
+.spotify-picker-item {
+  border-radius: 0.86rem;
+  border: 1px solid #dbdbdb;
+  background: #ffffff;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.spotify-picker-item iframe {
+  width: 100%;
+  min-height: 152px;
+  border: 0;
+  border-radius: 0.72rem;
+}
+
+.spotify-picker-meta strong {
+  display: block;
+  line-height: 1.14;
+}
+
+.spotify-picker-meta p {
+  margin: 0.15rem 0 0;
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.spotify-manual {
+  border-top: 1px solid #ececec;
+  padding-top: 0.62rem;
+}
+
+.spotify-manual label {
+  display: block;
+  margin-bottom: 0.38rem;
+  color: #666666;
+  font-size: 0.8rem;
+}
+
+.spotify-manual > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.46rem;
+}
+
+.spotify-manual input {
+  min-width: 0;
+  border: 1px solid #dbdbdb;
+  border-radius: 0.78rem;
+  background: #ffffff;
+  color: #111111;
+  padding: 0.58rem 0.68rem;
+}
+
 @media (max-width: 760px) {
   html,
   body,
@@ -3275,5 +3402,28 @@
 
   .spotify-card iframe {
     min-height: 132px;
+  }
+
+  .spotify-picker-modal {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+    border: 0;
+    padding: 0.76rem;
+    padding-bottom: calc(0.76rem + env(safe-area-inset-bottom));
+  }
+
+  .spotify-picker-tools {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .spotify-picker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spotify-manual > div {
+    grid-template-columns: 1fr;
   }
 }
