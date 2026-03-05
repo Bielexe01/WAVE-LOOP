@@ -32,6 +32,7 @@ import {
   subscribeStories,
   sendDirectMessage as sendDirectMessageToThread,
   signIn,
+  signInWithGoogle,
   signOut,
   signUp,
   toggleFollowUser,
@@ -658,6 +659,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState('')
   const [authMode, setAuthMode] = useState('signin')
   const [authBusy, setAuthBusy] = useState(false)
+  const [authGoogleBusy, setAuthGoogleBusy] = useState(false)
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' })
   const [peopleToFollow, setPeopleToFollow] = useState(buildLocalPeople)
   const [followStats, setFollowStats] = useState({
@@ -2040,6 +2042,29 @@ function App() {
     }
   }
 
+  const submitGoogleAuth = async () => {
+    if (!isSupabaseConfigured) {
+      return
+    }
+
+    setAuthGoogleBusy(true)
+    setErrorMessage('')
+    setStatusMessage('Redirecionando para login com Google...')
+
+    try {
+      const data = await signInWithGoogle()
+      if (data?.url && typeof window !== 'undefined') {
+        window.location.assign(data.url)
+        return
+      }
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel iniciar login com Google.'))
+      setStatusMessage('')
+    } finally {
+      setAuthGoogleBusy(false)
+    }
+  }
+
   const handleLogout = async () => {
     if (!isSupabaseConfigured) {
       return
@@ -2770,56 +2795,97 @@ function App() {
       <div className={rootClassName}>
         <AmbientBackdrop />
         <div className="auth-shell">
-          <div className="auth-card">
-            <p className="hero-tag">WaveLoop • Supabase</p>
-            <h1>Entre para publicar faixas e conversar com a comunidade.</h1>
-            <p>Use email e senha para acessar sua conta.</p>
-
-            <div className="auth-mode-switch">
+          <div className="auth-card auth-card-split">
+            <section className="auth-side">
+              <p className="auth-side-eyebrow">BEM VINDO</p>
+              <h2>{authMode === 'signin' ? 'Novo Login' : 'Ja tem conta?'}</h2>
+              <p>
+                {authMode === 'signin'
+                  ? 'Crie sua conta para publicar faixas, playlists e conversar no direct.'
+                  : 'Entre com seu email e senha para voltar para seu feed.'}
+              </p>
               <button
                 type="button"
-                className={authMode === 'signin' ? 'secondary-btn followed' : 'secondary-btn'}
-                onClick={() => setAuthMode('signin')}
+                className="secondary-btn auth-side-cta"
+                onClick={() => setAuthMode((current) => (current === 'signin' ? 'signup' : 'signin'))}
               >
-                Entrar
+                {authMode === 'signin' ? 'Criar conta' : 'Fazer login'}
               </button>
-              <button
-                type="button"
-                className={authMode === 'signup' ? 'secondary-btn followed' : 'secondary-btn'}
-                onClick={() => setAuthMode('signup')}
-              >
-                Criar conta
-              </button>
-            </div>
+              <div className="auth-side-social" aria-hidden="true">
+                <span>G</span>
+                <span>T</span>
+                <span>W</span>
+              </div>
+            </section>
 
-            <form className="auth-form" onSubmit={submitAuth}>
-              {authMode === 'signup' && (
+            <button
+              type="button"
+              className="auth-swap"
+              aria-label="Alternar entre login e cadastro"
+              onClick={() => setAuthMode((current) => (current === 'signin' ? 'signup' : 'signin'))}
+            >
+              ⇄
+            </button>
+
+            <section className="auth-pane">
+              <div className="auth-mode-switch">
+                <button
+                  type="button"
+                  className={authMode === 'signin' ? 'auth-mode-btn is-active' : 'auth-mode-btn'}
+                  onClick={() => setAuthMode('signin')}
+                >
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  className={authMode === 'signup' ? 'auth-mode-btn is-active' : 'auth-mode-btn'}
+                  onClick={() => setAuthMode('signup')}
+                >
+                  Criar conta
+                </button>
+              </div>
+
+              <h1>{authMode === 'signin' ? 'FAÇA LOGIN' : 'CRIE SUA CONTA'}</h1>
+              <p className="auth-pane-copy">Use email e senha para acessar sua conta.</p>
+
+              <form className="auth-form" onSubmit={submitAuth}>
+                {authMode === 'signup' && (
+                  <input
+                    type="text"
+                    placeholder="Seu nome"
+                    value={authForm.name}
+                    onChange={(event) => handleAuthChange('name', event.target.value)}
+                  />
+                )}
                 <input
-                  type="text"
-                  placeholder="Seu nome"
-                  value={authForm.name}
-                  onChange={(event) => handleAuthChange('name', event.target.value)}
+                  type="email"
+                  placeholder="Email"
+                  value={authForm.email}
+                  onChange={(event) => handleAuthChange('email', event.target.value)}
                 />
-              )}
-              <input
-                type="email"
-                placeholder="Email"
-                value={authForm.email}
-                onChange={(event) => handleAuthChange('email', event.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Senha"
-                value={authForm.password}
-                onChange={(event) => handleAuthChange('password', event.target.value)}
-              />
-              <button type="submit" className="primary-btn" disabled={authBusy}>
-                {authBusy ? 'Enviando...' : authMode === 'signin' ? 'Entrar' : 'Criar conta'}
-              </button>
-            </form>
+                <input
+                  type="password"
+                  placeholder="Senha"
+                  value={authForm.password}
+                  onChange={(event) => handleAuthChange('password', event.target.value)}
+                />
+                <button type="submit" className="primary-btn auth-submit-btn" disabled={authBusy}>
+                  {authBusy ? 'Enviando...' : authMode === 'signin' ? 'Entrar' : 'Criar conta'}
+                </button>
+              </form>
 
-            {statusMessage && <div className="notice success">{statusMessage}</div>}
-            {errorMessage && <div className="notice error">{errorMessage}</div>}
+              <button
+                type="button"
+                className="secondary-btn auth-google-btn"
+                onClick={submitGoogleAuth}
+                disabled={authBusy || authGoogleBusy}
+              >
+                {authGoogleBusy ? 'Abrindo Google...' : 'Continuar com Google'}
+              </button>
+
+              {statusMessage && <div className="notice success">{statusMessage}</div>}
+              {errorMessage && <div className="notice error">{errorMessage}</div>}
+            </section>
           </div>
         </div>
       </div>

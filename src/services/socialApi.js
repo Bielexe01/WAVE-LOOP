@@ -394,6 +394,29 @@ export async function signIn({ email, password }) {
   return data
 }
 
+export async function signInWithGoogle({ redirectTo } = {}) {
+  const client = requireSupabase()
+  const fallbackRedirect =
+    typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : undefined
+
+  const { data, error } = await client.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: redirectTo || fallbackRedirect,
+      queryParams: {
+        prompt: 'select_account',
+      },
+      skipBrowserRedirect: true,
+    },
+  })
+
+  if (error) {
+    throw error
+  }
+
+  return data
+}
+
 export async function signUp({ name, email, password }) {
   const client = requireSupabase()
   const { data, error } = await client.auth.signUp({
