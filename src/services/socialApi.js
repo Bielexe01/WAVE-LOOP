@@ -138,6 +138,25 @@ function parseSpotifyData(rawUrl, rawType = '') {
   }
 }
 
+function slugifyCommunityName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
+function normalizeThemeColor(value) {
+  const raw = String(value || '').trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
+    return raw.toLowerCase()
+  }
+
+  return '#3b82f6'
+}
+
 function directSetupError() {
   return new Error(
     'Tabelas de direct nao encontradas. Rode novamente supabase/schema.sql para ativar mensagens privadas.',
@@ -146,6 +165,18 @@ function directSetupError() {
 
 function storiesSetupError() {
   return new Error('Tabelas de stories nao encontradas. Rode novamente supabase/schema.sql para ativar stories.')
+}
+
+function communitiesSetupError() {
+  return new Error('Tabelas de comunidades nao encontradas. Rode novamente supabase/schema.sql.')
+}
+
+function playlistsSetupError() {
+  return new Error('Tabelas de playlists nao encontradas. Rode novamente supabase/schema.sql.')
+}
+
+function spotifyCapsuleSetupError() {
+  return new Error('Tabelas da capsula Spotify nao encontradas. Rode novamente supabase/schema.sql.')
 }
 
 function isMissingDirectRelation(error) {
@@ -158,6 +189,18 @@ function isMissingDirectRelation(error) {
 
 function isMissingStoriesRelation(error) {
   return isMissingRelationError(error, 'stories') || isMissingRelationError(error, 'story_views')
+}
+
+function isMissingCommunityRelation(error) {
+  return isMissingRelationError(error, 'communities') || isMissingRelationError(error, 'community_memberships')
+}
+
+function isMissingPlaylistRelation(error) {
+  return isMissingRelationError(error, 'spotify_playlists') || isMissingRelationError(error, 'playlist_saves')
+}
+
+function isMissingSpotifyCapsuleRelation(error) {
+  return isMissingRelationError(error, 'spotify_connections') || isMissingRelationError(error, 'spotify_capsule_snapshots')
 }
 
 const FEED_POST_SELECT = `
@@ -687,6 +730,753 @@ export async function toggleFollowUser({ followerId, followingId }) {
     following: !existing,
     targetFollowersCount,
     ownFollowingCount,
+  }
+}
+
+function mapCommunityRow(row, members = 0, joined = false) {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description || '',
+    themeColor: row.theme_color || '#3b82f6',
+    creatorId: row.creator_id,
+    creatorName: safeProfileName(row.profiles),
+    creatorHandle: safeHandle(row.profiles),
+    members,
+    joined,
+    createdAt: row.created_at,
+  }
+}
+
+function mapSpotifyPlaylistRow(row, saves = 0, saved = false) {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || '',
+    spotifyUrl: row.spotify_url,
+    spotifyType: row.spotify_type || 'playlist',
+    creatorId: row.creator_id,
+    creatorName: safeProfileName(row.profiles),
+    creatorHandle: safeHandle(row.profiles),
+    saves,
+    saved,
+    createdAt: row.created_at,
+    sampleTrack: null,
+  }
+}
+
+function mapSpotifyConnectionRow(row) {
+  if (!row) {
+    return null
+  }
+
+  return {
+    userId: row.user_id,
+    spotifyUserId: row.spotify_user_id,
+    displayName: row.display_name || '',
+    avatarUrl: row.avatar_url || null,
+    country: row.country || '',
+    product: row.product || '',
+    connectedAt: row.connected_at || null,
+    updatedAt: row.updated_at || null,
+    lastSyncedAt: row.last_synced_at || null,
+  }
+}
+
+function mapSpotifyCapsuleSnapshot(row) {
+  if (!row) {
+    return null
+  }
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    period: row.period || '4_weeks',
+    score: Number(row.score || 0),
+    topTracks: Array.isArray(row.top_tracks) ? row.top_tracks : [],
+    topArtists: Array.isArray(row.top_artists) ? row.top_artists : [],
+    recentPlays: Number(row.recent_plays || 0),
+    minutesEstimate: Number(row.minutes_estimate || 0),
+    createdAt: row.created_at || null,
+    user: row.profiles
+      ? {
+          id: row.profiles.id || row.user_id,
+          name: safeProfileName(row.profiles),
+          handle: safeHandle(row.profiles),
+          avatarUrl: safeAvatar(row.profiles),
+        }
+      : null,
+  }
+}
+
+async function countCommunityMembers(communityId) {
+  const client = requireSupabase()
+
+  const { count, error } = await client
+    .from('community_memberships')
+    .select('*', { head: true, count: 'exact' })
+    .eq('community_id', communityId)
+
+  if (error) {
+    if (isMissingCommunityRelation(error)) {
+      throw communitiesSetupError()
+    }
+    throw error
+  }
+
+  return count || 0
+}
+
+export async function fetchCommunities({ userId = '', limit = 40 }) {
+  const client = requireSupabase()
+  const safeLimit = Math.max(1, Math.min(80, limit))
+
+  const { data: communityRows, error: communitiesError } = await client
+    .from('communities')
+    .select(
+      `
+      id,
+      creator_id,
+      name,
+      slug,
+      description,
+      theme_color,
+      created_at,
+      profiles:creator_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .order('created_at', { ascending: false })
+    .limit(safeLimit)
+
+  if (communitiesError) {
+    if (isMissingCommunityRelation(communitiesError)) {
+      return []
+    }
+    throw communitiesError
+  }
+
+  const rows = communityRows || []
+  if (!rows.length) {
+    return []
+  }
+
+  const communityIds = rows.map((row) => row.id)
+  const { data: membershipRows, error: membershipsError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id')
+    .in('community_id', communityIds)
+
+  if (membershipsError) {
+    if (isMissingCommunityRelation(membershipsError)) {
+      return rows.map((row) => mapCommunityRow(row, 0, false))
+    }
+    throw membershipsError
+  }
+
+  const membersCountByCommunity = new Map()
+  const joinedSet = new Set()
+  for (const row of membershipRows || []) {
+    membersCountByCommunity.set(row.community_id, (membersCountByCommunity.get(row.community_id) || 0) + 1)
+    if (userId && row.user_id === userId) {
+      joinedSet.add(row.community_id)
+    }
+  }
+
+  return rows.map((row) => mapCommunityRow(row, membersCountByCommunity.get(row.id) || 0, joinedSet.has(row.id)))
+}
+
+export async function createCommunity({ userId, name, description = '', themeColor = '#3b82f6' }) {
+  const client = requireSupabase()
+  const cleanName = String(name || '').trim()
+  const cleanDescription = String(description || '').trim().slice(0, 500)
+
+  if (cleanName.length < 3) {
+    throw new Error('Nome da comunidade precisa ter ao menos 3 caracteres.')
+  }
+
+  const baseSlug = slugifyCommunityName(cleanName) || `comunidade-${Math.floor(Math.random() * 10000)}`
+  let insertedRow = null
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const suffix = attempt === 0 ? '' : `-${Math.floor(Math.random() * 900 + 100)}`
+    const slug = `${baseSlug}${suffix}`.slice(0, 60)
+
+    const { data, error } = await client
+      .from('communities')
+      .insert({
+        creator_id: userId,
+        name: cleanName,
+        slug,
+        description: cleanDescription,
+        theme_color: normalizeThemeColor(themeColor),
+      })
+      .select(
+        `
+        id,
+        creator_id,
+        name,
+        slug,
+        description,
+        theme_color,
+        created_at,
+        profiles:creator_id (
+          id,
+          name,
+          handle,
+          avatar_url
+        )
+      `,
+      )
+      .single()
+
+    if (!error) {
+      insertedRow = data
+      break
+    }
+
+    if (isMissingCommunityRelation(error)) {
+      throw communitiesSetupError()
+    }
+
+    if (error.code === '23505') {
+      continue
+    }
+
+    throw error
+  }
+
+  if (!insertedRow) {
+    throw new Error('Nao foi possivel criar comunidade com esse nome agora.')
+  }
+
+  const { error: ownerError } = await client.from('community_memberships').insert({
+    community_id: insertedRow.id,
+    user_id: userId,
+    role: 'owner',
+  })
+
+  if (ownerError && ownerError.code !== '23505') {
+    if (isMissingCommunityRelation(ownerError)) {
+      throw communitiesSetupError()
+    }
+    throw ownerError
+  }
+
+  return mapCommunityRow(insertedRow, 1, true)
+}
+
+export async function toggleCommunityMembership({ communityId, userId }) {
+  const client = requireSupabase()
+
+  const { data: existing, error: existingError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id, role')
+    .eq('community_id', communityId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (existingError) {
+    if (isMissingCommunityRelation(existingError)) {
+      throw communitiesSetupError()
+    }
+    throw existingError
+  }
+
+  if (existing?.role === 'owner') {
+    return {
+      joined: true,
+      members: await countCommunityMembers(communityId),
+    }
+  }
+
+  if (existing) {
+    const { error: deleteError } = await client
+      .from('community_memberships')
+      .delete()
+      .eq('community_id', communityId)
+      .eq('user_id', userId)
+
+    if (deleteError) {
+      if (isMissingCommunityRelation(deleteError)) {
+        throw communitiesSetupError()
+      }
+      throw deleteError
+    }
+  } else {
+    const { error: insertError } = await client.from('community_memberships').insert({
+      community_id: communityId,
+      user_id: userId,
+      role: 'member',
+    })
+
+    if (insertError) {
+      if (isMissingCommunityRelation(insertError)) {
+        throw communitiesSetupError()
+      }
+      throw insertError
+    }
+  }
+
+  const members = await countCommunityMembers(communityId)
+  return {
+    joined: !existing,
+    members,
+  }
+}
+
+export async function fetchSpotifyPlaylists({ userId = '', limit = 40 }) {
+  const client = requireSupabase()
+  const safeLimit = Math.max(1, Math.min(80, limit))
+
+  const { data: playlistRows, error: playlistsError } = await client
+    .from('spotify_playlists')
+    .select(
+      `
+      id,
+      creator_id,
+      title,
+      description,
+      spotify_url,
+      spotify_type,
+      created_at,
+      profiles:creator_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .order('created_at', { ascending: false })
+    .limit(safeLimit)
+
+  if (playlistsError) {
+    if (isMissingPlaylistRelation(playlistsError)) {
+      return []
+    }
+    throw playlistsError
+  }
+
+  const rows = playlistRows || []
+  if (!rows.length) {
+    return []
+  }
+
+  const playlistIds = rows.map((row) => row.id)
+  const { data: saveRows, error: savesError } = await client
+    .from('playlist_saves')
+    .select('playlist_id, user_id')
+    .in('playlist_id', playlistIds)
+
+  if (savesError) {
+    if (isMissingPlaylistRelation(savesError)) {
+      return rows.map((row) => mapSpotifyPlaylistRow(row, 0, false))
+    }
+    throw savesError
+  }
+
+  const savesCountByPlaylist = new Map()
+  const savedSet = new Set()
+  for (const row of saveRows || []) {
+    savesCountByPlaylist.set(row.playlist_id, (savesCountByPlaylist.get(row.playlist_id) || 0) + 1)
+    if (userId && row.user_id === userId) {
+      savedSet.add(row.playlist_id)
+    }
+  }
+
+  return rows.map((row) => mapSpotifyPlaylistRow(row, savesCountByPlaylist.get(row.id) || 0, savedSet.has(row.id)))
+}
+
+export async function createSpotifyPlaylist({ userId, title, description = '', spotifyUrl }) {
+  const client = requireSupabase()
+  const spotify = parseSpotifyData(spotifyUrl)
+
+  if (!spotify || spotify.type !== 'playlist') {
+    throw new Error('Use um link valido de playlist do Spotify.')
+  }
+
+  const cleanTitle = String(title || '').trim().slice(0, 120) || 'Playlist personalizada'
+  const cleanDescription = String(description || '').trim().slice(0, 500)
+
+  const { data: playlistRow, error: playlistError } = await client
+    .from('spotify_playlists')
+    .insert({
+      creator_id: userId,
+      title: cleanTitle,
+      description: cleanDescription,
+      spotify_url: spotify.url,
+      spotify_type: 'playlist',
+    })
+    .select(
+      `
+      id,
+      creator_id,
+      title,
+      description,
+      spotify_url,
+      spotify_type,
+      created_at,
+      profiles:creator_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .single()
+
+  if (playlistError) {
+    if (isMissingPlaylistRelation(playlistError)) {
+      throw playlistsSetupError()
+    }
+    throw playlistError
+  }
+
+  const { error: saveError } = await client.from('playlist_saves').insert({
+    playlist_id: playlistRow.id,
+    user_id: userId,
+  })
+
+  if (saveError && saveError.code !== '23505') {
+    if (isMissingPlaylistRelation(saveError)) {
+      throw playlistsSetupError()
+    }
+    throw saveError
+  }
+
+  return mapSpotifyPlaylistRow(playlistRow, 1, true)
+}
+
+export async function toggleSaveSpotifyPlaylist({ playlistId, userId }) {
+  const client = requireSupabase()
+
+  const { data: existing, error: existingError } = await client
+    .from('playlist_saves')
+    .select('playlist_id, user_id')
+    .eq('playlist_id', playlistId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (existingError) {
+    if (isMissingPlaylistRelation(existingError)) {
+      throw playlistsSetupError()
+    }
+    throw existingError
+  }
+
+  if (existing) {
+    const { error: deleteError } = await client
+      .from('playlist_saves')
+      .delete()
+      .eq('playlist_id', playlistId)
+      .eq('user_id', userId)
+
+    if (deleteError) {
+      if (isMissingPlaylistRelation(deleteError)) {
+        throw playlistsSetupError()
+      }
+      throw deleteError
+    }
+  } else {
+    const { error: insertError } = await client.from('playlist_saves').insert({
+      playlist_id: playlistId,
+      user_id: userId,
+    })
+
+    if (insertError) {
+      if (isMissingPlaylistRelation(insertError)) {
+        throw playlistsSetupError()
+      }
+      throw insertError
+    }
+  }
+
+  const { count, error: countError } = await client
+    .from('playlist_saves')
+    .select('*', { head: true, count: 'exact' })
+    .eq('playlist_id', playlistId)
+
+  if (countError) {
+    if (isMissingPlaylistRelation(countError)) {
+      throw playlistsSetupError()
+    }
+    throw countError
+  }
+
+  return {
+    saved: !existing,
+    saves: count || 0,
+  }
+}
+
+const SPOTIFY_CAPSULE_PERIODS = new Set(['4_weeks', '6_months', 'all_time'])
+
+function normalizeCapsulePeriod(value) {
+  const period = String(value || '').trim()
+  if (SPOTIFY_CAPSULE_PERIODS.has(period)) {
+    return period
+  }
+
+  return '4_weeks'
+}
+
+function sanitizeCapsuleRows(items, limit = 10) {
+  if (!Array.isArray(items)) {
+    return []
+  }
+
+  return items
+    .slice(0, Math.max(1, Math.min(20, limit)))
+    .map((item) => {
+      const row = item && typeof item === 'object' ? item : {}
+      return {
+        id: String(row.id || ''),
+        name: String(row.name || '').slice(0, 160),
+        artist: String(row.artist || '').slice(0, 160),
+        imageUrl: row.imageUrl ? String(row.imageUrl) : '',
+        externalUrl: row.externalUrl ? String(row.externalUrl) : '',
+        popularity: Number.isFinite(Number(row.popularity)) ? Math.max(0, Math.min(100, Number(row.popularity))) : 0,
+      }
+    })
+}
+
+export async function fetchSpotifyConnection({ userId }) {
+  if (!userId) {
+    return null
+  }
+
+  const client = requireSupabase()
+  const { data, error } = await client
+    .from('spotify_connections')
+    .select('user_id, spotify_user_id, display_name, avatar_url, country, product, connected_at, updated_at, last_synced_at')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      return null
+    }
+    throw error
+  }
+
+  return mapSpotifyConnectionRow(data)
+}
+
+export async function upsertSpotifyConnection({
+  userId,
+  spotifyUserId,
+  displayName = '',
+  avatarUrl = '',
+  country = '',
+  product = '',
+  lastSyncedAt = null,
+}) {
+  const client = requireSupabase()
+
+  if (!userId || !spotifyUserId) {
+    throw new Error('Conta Spotify invalida.')
+  }
+
+  const payload = {
+    user_id: userId,
+    spotify_user_id: String(spotifyUserId).trim(),
+    display_name: String(displayName || '').trim().slice(0, 180) || null,
+    avatar_url: String(avatarUrl || '').trim() || null,
+    country: String(country || '').trim().slice(0, 8) || null,
+    product: String(product || '').trim().slice(0, 24) || null,
+    updated_at: new Date().toISOString(),
+    last_synced_at: lastSyncedAt || null,
+  }
+
+  const { data, error } = await client
+    .from('spotify_connections')
+    .upsert(payload, { onConflict: 'user_id' })
+    .select('user_id, spotify_user_id, display_name, avatar_url, country, product, connected_at, updated_at, last_synced_at')
+    .single()
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      throw spotifyCapsuleSetupError()
+    }
+    throw error
+  }
+
+  return mapSpotifyConnectionRow(data)
+}
+
+export async function createSpotifyCapsuleSnapshot({
+  userId,
+  period = '4_weeks',
+  score = 0,
+  topTracks = [],
+  topArtists = [],
+  recentPlays = 0,
+  minutesEstimate = 0,
+}) {
+  const client = requireSupabase()
+  const normalizedPeriod = normalizeCapsulePeriod(period)
+
+  const { data, error } = await client
+    .from('spotify_capsule_snapshots')
+    .insert({
+      user_id: userId,
+      period: normalizedPeriod,
+      score: Math.max(0, Math.round(Number(score) || 0)),
+      top_tracks: sanitizeCapsuleRows(topTracks, 12),
+      top_artists: sanitizeCapsuleRows(topArtists, 12),
+      recent_plays: Math.max(0, Math.round(Number(recentPlays) || 0)),
+      minutes_estimate: Math.max(0, Math.round(Number(minutesEstimate) || 0)),
+    })
+    .select(
+      `
+      id,
+      user_id,
+      period,
+      score,
+      top_tracks,
+      top_artists,
+      recent_plays,
+      minutes_estimate,
+      created_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .single()
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      throw spotifyCapsuleSetupError()
+    }
+    throw error
+  }
+
+  return mapSpotifyCapsuleSnapshot(data)
+}
+
+export async function fetchLatestSpotifyCapsule({ userId, period = '4_weeks' }) {
+  if (!userId) {
+    return null
+  }
+
+  const client = requireSupabase()
+  const normalizedPeriod = normalizeCapsulePeriod(period)
+  const { data, error } = await client
+    .from('spotify_capsule_snapshots')
+    .select(
+      `
+      id,
+      user_id,
+      period,
+      score,
+      top_tracks,
+      top_artists,
+      recent_plays,
+      minutes_estimate,
+      created_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('user_id', userId)
+    .eq('period', normalizedPeriod)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      return null
+    }
+    throw error
+  }
+
+  return mapSpotifyCapsuleSnapshot(data)
+}
+
+export async function fetchSpotifyCapsuleLeaderboard({ period = '4_weeks', limit = 20 }) {
+  const client = requireSupabase()
+  const normalizedPeriod = normalizeCapsulePeriod(period)
+  const safeLimit = Math.max(1, Math.min(50, limit))
+
+  const { data, error } = await client
+    .from('spotify_capsule_snapshots')
+    .select(
+      `
+      id,
+      user_id,
+      period,
+      score,
+      top_tracks,
+      top_artists,
+      recent_plays,
+      minutes_estimate,
+      created_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('period', normalizedPeriod)
+    .order('created_at', { ascending: false })
+    .limit(350)
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      return []
+    }
+    throw error
+  }
+
+  const latestByUser = new Map()
+  for (const row of data || []) {
+    if (!latestByUser.has(row.user_id)) {
+      latestByUser.set(row.user_id, row)
+    }
+  }
+
+  return Array.from(latestByUser.values())
+    .map((row) => mapSpotifyCapsuleSnapshot(row))
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score
+      }
+      return new Date(b.createdAt) - new Date(a.createdAt)
+    })
+    .slice(0, safeLimit)
+}
+
+export async function deleteSpotifyConnection({ userId }) {
+  if (!userId) {
+    return
+  }
+
+  const client = requireSupabase()
+  const { error } = await client.from('spotify_connections').delete().eq('user_id', userId)
+
+  if (error) {
+    if (isMissingSpotifyCapsuleRelation(error)) {
+      throw spotifyCapsuleSetupError()
+    }
+    throw error
   }
 }
 

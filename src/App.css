@@ -761,6 +761,54 @@
   gap: 0.54rem;
 }
 
+.mode-create-form {
+  margin-top: 0.62rem;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.mode-create-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.mode-create-grid input {
+  min-width: 0;
+  border-radius: 0.74rem;
+  border: 1px solid rgba(119, 151, 219, 0.34);
+  background: rgba(9, 16, 31, 0.7);
+  color: #e9f3ff;
+  padding: 0.54rem 0.62rem;
+}
+
+.mode-create-grid input::placeholder {
+  color: #87a4cf;
+}
+
+.mode-create-color {
+  border-radius: 0.74rem;
+  border: 1px solid rgba(119, 151, 219, 0.34);
+  background: rgba(9, 16, 31, 0.7);
+  color: #e9f3ff;
+  padding: 0.42rem 0.58rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.52rem;
+  font-size: 0.79rem;
+  font-weight: 700;
+}
+
+.mode-create-color input {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+}
+
 .mode-card {
   border-radius: 0.9rem;
   border: 1px solid rgba(121, 154, 222, 0.35);
@@ -794,8 +842,162 @@
 
 .mode-card-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.42rem;
+}
+
+.mode-link-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spotify-capsule-board {
+  margin-top: 0.86rem;
+  border-radius: 0.92rem;
+  border: 1px solid rgba(121, 154, 222, 0.35);
+  background: rgba(9, 16, 31, 0.74);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.spotify-capsule-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.64rem;
+}
+
+.spotify-capsule-head h3 {
+  margin: 0;
+  color: #eff8ff;
+  font-size: 0.95rem;
+}
+
+.spotify-capsule-head p {
+  margin: 0.2rem 0 0;
+  color: #8ca7d2;
+  font-size: 0.79rem;
+}
+
+.spotify-capsule-actions {
+  display: flex;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.spotify-capsule-periods {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.spotify-capsule-connection {
+  border-radius: 0.82rem;
+  border: 1px solid rgba(122, 157, 224, 0.32);
+  background: rgba(8, 14, 28, 0.6);
+  padding: 0.52rem;
+  display: flex;
+  align-items: center;
+  gap: 0.52rem;
+}
+
+.spotify-capsule-connection strong {
+  color: #edf7ff;
+  display: block;
+}
+
+.spotify-capsule-connection p {
+  margin: 0.12rem 0 0;
+  color: #89a3cc;
+  font-size: 0.76rem;
+}
+
+.spotify-capsule-mine {
+  border-radius: 0.82rem;
+  border: 1px solid rgba(122, 157, 224, 0.38);
+  background: linear-gradient(136deg, rgba(23, 109, 250, 0.18), rgba(0, 166, 200, 0.14));
+  padding: 0.6rem;
+}
+
+.spotify-capsule-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.spotify-capsule-metrics span {
+  color: #93afd8;
+  font-size: 0.74rem;
+}
+
+.spotify-capsule-metrics strong {
+  display: block;
+  margin-top: 0.12rem;
+  color: #f3f9ff;
+  font-size: 0.95rem;
+}
+
+.spotify-capsule-top {
+  margin: 0.48rem 0 0;
+  color: #b7cef0;
+  font-size: 0.79rem;
+}
+
+.spotify-capsule-ranking {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.spotify-rank-row {
+  border-radius: 0.78rem;
+  border: 1px solid rgba(122, 156, 221, 0.3);
+  background: rgba(8, 14, 29, 0.58);
+  padding: 0.44rem 0.52rem;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.48rem;
+}
+
+.spotify-rank-row.is-me {
+  border-color: rgba(134, 213, 255, 0.76);
+}
+
+.spotify-rank-pos {
+  color: #8fb0de;
+  font-size: 0.74rem;
+  min-width: 1.7rem;
+}
+
+.spotify-rank-user strong {
+  color: #eef8ff;
+  display: block;
+  font-size: 0.85rem;
+}
+
+.spotify-rank-user p {
+  margin: 0.08rem 0 0;
+  color: #88a3cc;
+  font-size: 0.75rem;
+}
+
+.spotify-rank-score {
+  text-align: right;
+}
+
+.spotify-rank-score strong {
+  color: #f3f9ff;
+  display: block;
+  font-size: 0.86rem;
+}
+
+.spotify-rank-score span {
+  color: #88a2cb;
+  font-size: 0.72rem;
 }
 
 .profile-hub-grid {
@@ -1557,9 +1759,9 @@
   align-self: start;
   border-radius: 999px;
   border: 1px solid rgba(121, 149, 213, 0.52);
-  background: rgba(8, 15, 30, 0.66);
+  background: rgba(69, 122, 235, 0.66);
   padding: 0.25rem 0.55rem;
-  color: #a8d9ff;
+  color: #ffffff;
   font-size: 0.74rem;
   white-space: nowrap;
 }
@@ -2117,6 +2319,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .mode-create-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .direct-board {
     grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
   }
@@ -2174,6 +2380,10 @@
 
   .mode-board-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mode-create-grid {
+    grid-template-columns: 1fr;
   }
 
   .profile-hub-grid,
@@ -2246,6 +2456,11 @@
   }
 
   .trend-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-create-grid,
+  .mode-card-actions {
     grid-template-columns: 1fr;
   }
 
@@ -2748,7 +2963,7 @@
 .trend-card p,
 .trend-rank,
 .trend-plays,
-.mood-pill,
+
 .direct-message span,
 .direct-thread-item span,
 .profile-editor-footer span {
@@ -5236,6 +5451,43 @@
     max-height: none;
     height: 100%;
   }
+
+  .scene-root.is-direct-fullscreen .main-column .direct-chat-head {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .scene-root.is-direct-fullscreen .main-column .direct-chat-head-main {
+    position: sticky;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: calc(0.56rem + env(safe-area-inset-top)) 0.62rem 0.48rem;
+    background: rgba(3, 10, 21, 0.92);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+  }
+
+  .scene-root.is-direct-fullscreen .main-column .direct-chat-head-text {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .scene-root.is-direct-fullscreen .main-column .direct-chat-head .direct-profile-btn {
+    display: block;
+    width: calc(100% - 1.24rem);
+    margin: 0.12rem auto 0;
+  }
 }
 
 /* ---------- Theme polish final override ---------- */
@@ -6019,4 +6271,45 @@
   background: rgba(20, 33, 58, 0.9);
   border-color: rgba(164, 189, 255, 0.38);
   color: #eaf2ff;
+}
+
+/* ---------- Dark text contrast hard override ---------- */
+.scene-root.theme-dark :where(
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  span,
+  strong,
+  small,
+  label,
+  legend,
+  a,
+  li,
+  dt,
+  dd,
+  time
+) {
+  color: #eef5ff !important;
+}
+
+.scene-root.theme-dark button,
+.scene-root.theme-dark input,
+.scene-root.theme-dark textarea,
+.scene-root.theme-dark select {
+  color: #eef5ff !important;
+}
+
+.scene-root.theme-dark input::placeholder,
+.scene-root.theme-dark textarea::placeholder {
+  color: #a5b7d6 !important;
+}
+
+.scene-root.theme-dark .mode-create-grid input,
+.scene-root.theme-dark .mode-create-color {
+  background: rgba(12, 22, 40, 0.82) !important;
+  border-color: #324b6f !important;
 }

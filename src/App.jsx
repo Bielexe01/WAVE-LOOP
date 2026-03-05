@@ -16,12 +16,21 @@ import {
   createStory,
   createOrGetDirectThread,
   createPost,
+  createSpotifyCapsuleSnapshot,
+  createCommunity,
+  createSpotifyPlaylist,
+  deleteSpotifyConnection,
   ensureProfile,
   fetchActiveStories,
+  fetchLatestSpotifyCapsule,
+  fetchSpotifyCapsuleLeaderboard,
+  fetchSpotifyConnection,
+  fetchCommunities,
   fetchDirectThreads,
   fetchFollowStats,
   fetchFeed,
   fetchPeopleToFollow,
+  fetchSpotifyPlaylists,
   searchProfiles,
   fetchPublicProfileByHandle,
   getSession,
@@ -37,7 +46,10 @@ import {
   signUp,
   toggleFollowUser,
   toggleLike,
+  toggleSaveSpotifyPlaylist,
   toggleRepost,
+  toggleCommunityMembership,
+  upsertSpotifyConnection,
   updateOwnProfile,
 } from './services/socialApi'
 
@@ -440,6 +452,7 @@ const playlistCards = [
     title: 'Night Drive BR',
     curator: 'WaveLoop Curators',
     tracks: 24,
+    spotifyUrl: 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
     sampleTrack: { title: 'Luz de Neon', artist: 'Mila C.' },
   },
   {
@@ -447,6 +460,7 @@ const playlistCards = [
     title: 'Lo-fi Focus',
     curator: 'Rafa Melo',
     tracks: 32,
+    spotifyUrl: 'https://open.spotify.com/playlist/37i9dQZF1DX4WYpdgoIcn6',
     sampleTrack: { title: 'Quiet Circuit', artist: 'Rafa Melo' },
   },
   {
@@ -454,9 +468,36 @@ const playlistCards = [
     title: 'Synth City',
     curator: 'Luna Costa',
     tracks: 18,
+    spotifyUrl: 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd',
     sampleTrack: { title: 'Brisa da Cidade', artist: 'Maya e Atlas' },
   },
 ]
+
+function buildLocalCommunityCards() {
+  return communityCards.map((community) => ({
+    ...community,
+    creatorId: 'wave-system',
+    creatorName: 'WaveLoop',
+    creatorHandle: 'waveloop',
+    joined: false,
+  }))
+}
+
+function buildLocalPlaylistCards() {
+  return playlistCards.map((playlist) => ({
+    id: playlist.id,
+    title: playlist.title,
+    description: '',
+    spotifyUrl: playlist.spotifyUrl,
+    spotifyType: 'playlist',
+    creatorId: 'wave-system',
+    creatorName: playlist.curator,
+    creatorHandle: normalizeHandle(playlist.curator.replace(/\s+/g, '').toLowerCase()),
+    saves: Math.floor(playlist.tracks * 3.2),
+    saved: false,
+    sampleTrack: playlist.sampleTrack,
+  }))
+}
 
 const spotifyPickerLibrary = [
   {
@@ -529,6 +570,161 @@ const heroCountLabels = {
   Eventos: 'posts relacionados',
   Playlists: 'posts com faixa',
   Perfil: 'posts do seu perfil',
+}
+
+const spotifyCapsuleClientId = String(import.meta.env.VITE_SPOTIFY_CLIENT_ID || '').trim()
+const spotifyCapsuleRedirectUri =
+  String(import.meta.env.VITE_SPOTIFY_REDIRECT_URI || '').trim() ||
+  (typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : '')
+
+const spotifyCapsulePeriods = [
+  { id: '4_weeks', label: '4 semanas', range: 'short_term' },
+  { id: '6_months', label: '6 meses', range: 'medium_term' },
+  { id: 'all_time', label: 'Sempre', range: 'long_term' },
+]
+
+const spotifyCapsuleScopes = [
+  'user-read-private',
+  'user-read-email',
+  'user-top-read',
+  'user-read-recently-played',
+]
+
+function capsulePeriodLabel(period) {
+  return spotifyCapsulePeriods.find((item) => item.id === period)?.label || '4 semanas'
+}
+
+function capsulePeriodRange(period) {
+  return spotifyCapsulePeriods.find((item) => item.id === period)?.range || 'short_term'
+}
+
+function randomSpotifyPkceString(length = 96) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~'
+  const bytes = crypto.getRandomValues(new Uint8Array(length))
+  let output = ''
+
+  for (const byte of bytes) {
+    output += alphabet[byte % alphabet.length]
+  }
+
+  return output
+}
+
+function encodeBase64Url(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function makeSpotifyCodeChallenge(verifier) {
+  const bytes = new TextEncoder().encode(verifier)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return encodeBase64Url(digest)
+}
+
+function spotifyPkceStorageKey() {
+  return 'waveloop:spotify:pkce'
+}
+
+function spotifyTokenStorageKey(userId) {
+  return `waveloop:spotify:token:${userId || 'anon'}`
+}
+
+function parseJsonSafe(value, fallback = null) {
+  if (!value) {
+    return fallback
+  }
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function cleanupSpotifyAuthParams() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const url = new URL(window.location.href)
+  const hadCode = url.searchParams.has('code')
+  const hadState = url.searchParams.has('state')
+  const hadError = url.searchParams.has('error')
+  const hadErrorDescription = url.searchParams.has('error_description')
+  if (!hadCode && !hadState && !hadError && !hadErrorDescription) {
+    return
+  }
+
+  url.searchParams.delete('code')
+  url.searchParams.delete('state')
+  url.searchParams.delete('error')
+  url.searchParams.delete('error_description')
+  const nextPath = `${url.pathname}${url.search}${url.hash}`
+  window.history.replaceState({}, '', nextPath)
+}
+
+function buildLocalSpotifyCapsuleLeaderboard(currentUser) {
+  const base = [
+    {
+      id: 'local-capsule-1',
+      userId: 'local-nina',
+      user: { id: 'local-nina', name: 'Nina Prado', handle: 'demo_ninaprado', avatarUrl: null },
+      period: '4_weeks',
+      score: 972,
+      topTracks: [
+        { id: 'track-1', name: 'Nightcall', artist: 'Kavinsky' },
+        { id: 'track-2', name: 'Midnight City', artist: 'M83' },
+      ],
+      topArtists: [{ id: 'artist-1', name: 'The Weeknd' }],
+      recentPlays: 38,
+      minutesEstimate: 1310,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'local-capsule-2',
+      userId: 'local-vitor',
+      user: { id: 'local-vitor', name: 'Vitor', handle: 'vitor', avatarUrl: null },
+      period: '4_weeks',
+      score: 904,
+      topTracks: [
+        { id: 'track-3', name: 'B.Y.O.B', artist: 'System Of A Down' },
+        { id: 'track-4', name: 'Toxicity', artist: 'System Of A Down' },
+      ],
+      topArtists: [{ id: 'artist-2', name: 'System Of A Down' }],
+      recentPlays: 34,
+      minutesEstimate: 1205,
+      createdAt: new Date().toISOString(),
+    },
+  ]
+
+  if (!currentUser?.id) {
+    return base
+  }
+
+  return [
+    {
+      id: 'local-capsule-self',
+      userId: currentUser.id,
+      user: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+        avatarUrl: currentUser.avatarUrl || null,
+      },
+      period: '4_weeks',
+      score: 950,
+      topTracks: [{ id: 'track-self-1', name: 'As It Was', artist: 'Harry Styles' }],
+      topArtists: [{ id: 'artist-self-1', name: 'Drake' }],
+      recentPlays: 36,
+      minutesEstimate: 1250,
+      createdAt: new Date().toISOString(),
+    },
+    ...base,
+  ]
 }
 
 function NavIcon({ name, active = false }) {
@@ -676,12 +872,29 @@ function App() {
   })
   const [profileAvatarFile, setProfileAvatarFile] = useState(null)
   const [profileAvatarPreview, setProfileAvatarPreview] = useState('')
-  const [joinedCommunities, setJoinedCommunities] = useState(
-    () => Object.fromEntries(communityCards.map((community) => [community.id, false])),
-  )
-  const [savedPlaylists, setSavedPlaylists] = useState(
-    () => Object.fromEntries(playlistCards.map((playlist) => [playlist.id, false])),
-  )
+  const [communities, setCommunities] = useState(isSupabaseConfigured ? [] : buildLocalCommunityCards)
+  const [loadingCommunities, setLoadingCommunities] = useState(false)
+  const [creatingCommunity, setCreatingCommunity] = useState(false)
+  const [communityDraft, setCommunityDraft] = useState({
+    name: '',
+    description: '',
+    themeColor: '#3b82f6',
+  })
+  const [playlists, setPlaylists] = useState(isSupabaseConfigured ? [] : buildLocalPlaylistCards)
+  const [loadingPlaylists, setLoadingPlaylists] = useState(false)
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false)
+  const [playlistDraft, setPlaylistDraft] = useState({
+    title: '',
+    description: '',
+    spotifyUrl: '',
+  })
+  const [spotifyCapsulePeriod, setSpotifyCapsulePeriod] = useState('4_weeks')
+  const [spotifyCapsuleConnection, setSpotifyCapsuleConnection] = useState(null)
+  const [spotifyCapsuleMine, setSpotifyCapsuleMine] = useState(null)
+  const [spotifyCapsuleLeaderboard, setSpotifyCapsuleLeaderboard] = useState([])
+  const [loadingSpotifyCapsule, setLoadingSpotifyCapsule] = useState(false)
+  const [syncingSpotifyCapsule, setSyncingSpotifyCapsule] = useState(false)
+  const [disconnectingSpotifyCapsule, setDisconnectingSpotifyCapsule] = useState(false)
   const [savedEvents, setSavedEvents] = useState(() => Object.fromEntries(events.map((event) => [event.id, false])))
   const [directThreads, setDirectThreads] = useState(isSupabaseConfigured ? [] : buildInitialDirectThreads)
   const [activeDirectThreadId, setActiveDirectThreadId] = useState(isSupabaseConfigured ? '' : 'dm-luna')
@@ -751,6 +964,7 @@ function App() {
   const composerRef = useRef(null)
   const storyMediaInputRef = useRef(null)
   const storyAutoAdvanceRef = useRef(null)
+  const spotifyAuthProcessingRef = useRef(false)
 
   const currentUser = useMemo(() => {
     if (!isSupabaseConfigured) {
@@ -1009,6 +1223,294 @@ function App() {
     }
   }, [])
 
+  const loadCommunities = useCallback(async (userId) => {
+    if (!isSupabaseConfigured || !userId) {
+      setCommunities(buildLocalCommunityCards())
+      return
+    }
+
+    setLoadingCommunities(true)
+
+    try {
+      const nextCommunities = await fetchCommunities({ userId, limit: 48 })
+      setCommunities(nextCommunities)
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Falha ao carregar comunidades.'))
+    } finally {
+      setLoadingCommunities(false)
+    }
+  }, [])
+
+  const loadPlaylists = useCallback(async (userId) => {
+    if (!isSupabaseConfigured || !userId) {
+      setPlaylists(buildLocalPlaylistCards())
+      return
+    }
+
+    setLoadingPlaylists(true)
+
+    try {
+      const nextPlaylists = await fetchSpotifyPlaylists({ userId, limit: 48 })
+      setPlaylists(nextPlaylists)
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Falha ao carregar playlists.'))
+    } finally {
+      setLoadingPlaylists(false)
+    }
+  }, [])
+
+  const readSpotifyTokenCache = useCallback((userId) => {
+    if (typeof window === 'undefined' || !userId) {
+      return null
+    }
+
+    const raw = window.localStorage.getItem(spotifyTokenStorageKey(userId))
+    return parseJsonSafe(raw, null)
+  }, [])
+
+  const writeSpotifyTokenCache = useCallback((userId, payload) => {
+    if (typeof window === 'undefined' || !userId) {
+      return
+    }
+
+    if (!payload) {
+      window.localStorage.removeItem(spotifyTokenStorageKey(userId))
+      return
+    }
+
+    window.localStorage.setItem(spotifyTokenStorageKey(userId), JSON.stringify(payload))
+  }, [])
+
+  const refreshSpotifyAccessToken = useCallback(
+    async (userId, refreshToken) => {
+      if (!refreshToken) {
+        throw new Error('Conexao Spotify expirada. Conecte sua conta novamente.')
+      }
+
+      if (!spotifyCapsuleClientId) {
+        throw new Error('Configure VITE_SPOTIFY_CLIENT_ID para sincronizar com Spotify.')
+      }
+
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: spotifyCapsuleClientId,
+        }),
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.access_token) {
+        throw new Error(data.error_description || 'Nao foi possivel renovar o token do Spotify.')
+      }
+
+      const nextPayload = {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || refreshToken,
+        expiresAt: Date.now() + Math.max(300, Number(data.expires_in || 3600) - 60) * 1000,
+        scope: data.scope || '',
+      }
+
+      writeSpotifyTokenCache(userId, nextPayload)
+      return nextPayload.accessToken
+    },
+    [writeSpotifyTokenCache],
+  )
+
+  const ensureSpotifyAccessToken = useCallback(
+    async (userId) => {
+      const tokenData = readSpotifyTokenCache(userId)
+      if (!tokenData?.accessToken) {
+        throw new Error('Conecte sua conta Spotify para sincronizar a capsula.')
+      }
+
+      const expiresAt = Number(tokenData.expiresAt || 0)
+      if (!expiresAt || Date.now() < expiresAt) {
+        return tokenData.accessToken
+      }
+
+      return refreshSpotifyAccessToken(userId, tokenData.refreshToken)
+    },
+    [readSpotifyTokenCache, refreshSpotifyAccessToken],
+  )
+
+  const loadSpotifyCapsule = useCallback(
+    async (userId, period = spotifyCapsulePeriod) => {
+      if (!userId) {
+        setSpotifyCapsuleConnection(null)
+        setSpotifyCapsuleMine(null)
+        setSpotifyCapsuleLeaderboard([])
+        return
+      }
+
+      if (!isSupabaseConfigured) {
+        const localBoard = buildLocalSpotifyCapsuleLeaderboard(currentUser)
+          .filter((entry) => entry.period === period)
+          .sort((a, b) => b.score - a.score)
+        setSpotifyCapsuleConnection({
+          userId,
+          spotifyUserId: 'demo-user',
+          displayName: currentUser?.name || 'Demo User',
+          avatarUrl: currentUser?.avatarUrl || null,
+          country: 'BR',
+          product: 'premium',
+          connectedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSyncedAt: new Date().toISOString(),
+        })
+        setSpotifyCapsuleLeaderboard(localBoard)
+        setSpotifyCapsuleMine(localBoard.find((entry) => entry.userId === userId) || localBoard[0] || null)
+        return
+      }
+
+      setLoadingSpotifyCapsule(true)
+      try {
+        const [connection, mine, leaderboard] = await Promise.all([
+          fetchSpotifyConnection({ userId }),
+          fetchLatestSpotifyCapsule({ userId, period }),
+          fetchSpotifyCapsuleLeaderboard({ period, limit: 24 }),
+        ])
+
+        setSpotifyCapsuleConnection(connection)
+        setSpotifyCapsuleMine(mine)
+        setSpotifyCapsuleLeaderboard(leaderboard)
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Falha ao carregar a capsula Spotify.'))
+      } finally {
+        setLoadingSpotifyCapsule(false)
+      }
+    },
+    [currentUser, spotifyCapsulePeriod],
+  )
+
+  const syncSpotifyCapsule = useCallback(
+    async (userId, options = {}) => {
+      const period = options.period || spotifyCapsulePeriod
+      const silent = Boolean(options.silent)
+      if (!userId) {
+        return
+      }
+
+      if (!silent) {
+        setSyncingSpotifyCapsule(true)
+      }
+
+      try {
+        const accessToken = await ensureSpotifyAccessToken(userId)
+        const headers = {
+          Authorization: `Bearer ${accessToken}`,
+        }
+
+        const [profileResponse, topTracksResponse, topArtistsResponse, recentResponse] = await Promise.all([
+          fetch('https://api.spotify.com/v1/me', { headers }),
+          fetch(
+            `https://api.spotify.com/v1/me/top/tracks?time_range=${encodeURIComponent(capsulePeriodRange(period))}&limit=20`,
+            { headers },
+          ),
+          fetch(
+            `https://api.spotify.com/v1/me/top/artists?time_range=${encodeURIComponent(capsulePeriodRange(period))}&limit=20`,
+            { headers },
+          ),
+          fetch('https://api.spotify.com/v1/me/player/recently-played?limit=50', { headers }),
+        ])
+
+        const [profileData, tracksData, artistsData, recentData] = await Promise.all([
+          profileResponse.json().catch(() => ({})),
+          topTracksResponse.json().catch(() => ({})),
+          topArtistsResponse.json().catch(() => ({})),
+          recentResponse.json().catch(() => ({})),
+        ])
+
+        if (!profileResponse.ok) {
+          throw new Error(profileData.error?.message || 'Falha ao carregar perfil Spotify.')
+        }
+
+        if (!topTracksResponse.ok) {
+          throw new Error(tracksData.error?.message || 'Falha ao carregar top tracks do Spotify.')
+        }
+
+        if (!topArtistsResponse.ok) {
+          throw new Error(artistsData.error?.message || 'Falha ao carregar top artists do Spotify.')
+        }
+
+        if (!recentResponse.ok) {
+          throw new Error(recentData.error?.message || 'Falha ao carregar historico recente do Spotify.')
+        }
+
+        const topTracks = (tracksData.items || []).map((item) => ({
+          id: item.id || '',
+          name: item.name || '',
+          artist: Array.isArray(item.artists) ? item.artists.map((artist) => artist?.name).filter(Boolean).join(', ') : '',
+          imageUrl: item.album?.images?.[0]?.url || '',
+          externalUrl: item.external_urls?.spotify || '',
+          popularity: Number(item.popularity || 0),
+          durationMs: Number(item.duration_ms || 0),
+        }))
+
+        const topArtists = (artistsData.items || []).map((item) => ({
+          id: item.id || '',
+          name: item.name || '',
+          artist: '',
+          imageUrl: item.images?.[0]?.url || '',
+          externalUrl: item.external_urls?.spotify || '',
+          popularity: Number(item.popularity || 0),
+        }))
+
+        const recentItems = recentData.items || []
+        const recentMinutes = recentItems.reduce((acc, item) => acc + Number(item?.track?.duration_ms || 0), 0) / 60000
+        const topMinutes = topTracks.reduce((acc, item) => acc + Number(item.durationMs || 0), 0) / 60000
+        const minutesEstimate = Math.max(0, Math.round(recentMinutes + topMinutes))
+        const recentPlays = recentItems.length
+        const uniqueTracks = new Set(topTracks.map((item) => item.id).filter(Boolean)).size
+        const uniqueArtists = new Set(topArtists.map((item) => item.id).filter(Boolean)).size
+        const averagePopularity =
+          topTracks.length > 0
+            ? topTracks.reduce((acc, item) => acc + Number(item.popularity || 0), 0) / topTracks.length
+            : 0
+        const score = Math.max(
+          0,
+          Math.round(uniqueTracks * 24 + uniqueArtists * 16 + recentPlays * 3 + averagePopularity * 2 + minutesEstimate / 12),
+        )
+
+        const syncedAt = new Date().toISOString()
+        await Promise.all([
+          upsertSpotifyConnection({
+            userId,
+            spotifyUserId: profileData.id,
+            displayName: profileData.display_name || profileData.id,
+            avatarUrl: profileData.images?.[0]?.url || '',
+            country: profileData.country || '',
+            product: profileData.product || '',
+            lastSyncedAt: syncedAt,
+          }),
+          createSpotifyCapsuleSnapshot({
+            userId,
+            period,
+            score,
+            topTracks,
+            topArtists,
+            recentPlays,
+            minutesEstimate,
+          }),
+        ])
+
+        await loadSpotifyCapsule(userId, period)
+        setStatusMessage(`Capsula Spotify sincronizada (${capsulePeriodLabel(period)}).`)
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Nao foi possivel sincronizar a capsula Spotify.'))
+      } finally {
+        if (!silent) {
+          setSyncingSpotifyCapsule(false)
+        }
+      }
+    },
+    [ensureSpotifyAccessToken, loadSpotifyCapsule, spotifyCapsulePeriod],
+  )
+
   const loadStories = useCallback(async (userId) => {
     if (!isSupabaseConfigured || !userId) {
       return
@@ -1089,6 +1591,11 @@ function App() {
         setDirectThreads([])
         setActiveDirectThreadId('')
         setPeopleToFollow(buildLocalPeople())
+        setCommunities(buildLocalCommunityCards())
+        setPlaylists(buildLocalPlaylistCards())
+        setSpotifyCapsuleConnection(null)
+        setSpotifyCapsuleMine(null)
+        setSpotifyCapsuleLeaderboard([])
         setFollowStats({
           followers: demoUser.followers,
           following: demoUser.following,
@@ -1108,6 +1615,9 @@ function App() {
           loadFeed(nextSession.user.id),
           loadFollowStats(nextSession.user.id),
           loadPeopleToFollow(nextSession.user.id),
+          loadCommunities(nextSession.user.id),
+          loadPlaylists(nextSession.user.id),
+          loadSpotifyCapsule(nextSession.user.id, spotifyCapsulePeriod),
           loadStories(nextSession.user.id),
           loadDirectInbox(nextSession.user.id),
         ])
@@ -1145,7 +1655,7 @@ function App() {
       isMounted = false
       unsubscribe()
     }
-  }, [loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadStories])
+  }, [loadCommunities, loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadPlaylists, loadSpotifyCapsule, loadStories, spotifyCapsulePeriod])
 
   useEffect(() => {
     if (activeDirectThread) {
@@ -1156,6 +1666,102 @@ function App() {
       setActiveDirectThreadId(directThreads[0].id)
     }
   }, [activeDirectThread, directThreads])
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      return
+    }
+
+    void loadSpotifyCapsule(currentUser.id, spotifyCapsulePeriod)
+  }, [currentUser?.id, loadSpotifyCapsule, spotifyCapsulePeriod])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !currentUser?.id || typeof window === 'undefined') {
+      return
+    }
+
+    if (spotifyAuthProcessingRef.current) {
+      return
+    }
+
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get('code')
+    const state = url.searchParams.get('state')
+    const oauthError = url.searchParams.get('error')
+
+    if (!code && !oauthError) {
+      return
+    }
+
+    const cached = parseJsonSafe(window.sessionStorage.getItem(spotifyPkceStorageKey()), null)
+
+    if (oauthError) {
+      cleanupSpotifyAuthParams()
+      window.sessionStorage.removeItem(spotifyPkceStorageKey())
+      const oauthErrorDescription = url.searchParams.get('error_description')
+      setErrorMessage(oauthErrorDescription || 'Falha ao conectar com Spotify.')
+      return
+    }
+
+    if (!spotifyCapsuleClientId) {
+      cleanupSpotifyAuthParams()
+      window.sessionStorage.removeItem(spotifyPkceStorageKey())
+      setErrorMessage('Configure VITE_SPOTIFY_CLIENT_ID para conectar Spotify.')
+      return
+    }
+
+    if (!code || !state || !cached?.verifier || cached.state !== state || cached.userId !== currentUser.id) {
+      cleanupSpotifyAuthParams()
+      window.sessionStorage.removeItem(spotifyPkceStorageKey())
+      setErrorMessage('Sessao de conexao Spotify invalida. Tente conectar novamente.')
+      return
+    }
+
+    spotifyAuthProcessingRef.current = true
+
+    void (async () => {
+      try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: spotifyCapsuleClientId,
+            redirect_uri: spotifyCapsuleRedirectUri,
+            code_verifier: cached.verifier,
+          }),
+        })
+
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok || !data.access_token) {
+          throw new Error(data.error_description || 'Nao foi possivel autenticar com Spotify.')
+        }
+
+        writeSpotifyTokenCache(currentUser.id, {
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token || '',
+          expiresAt: Date.now() + Math.max(300, Number(data.expires_in || 3600) - 60) * 1000,
+          scope: data.scope || '',
+        })
+
+        cleanupSpotifyAuthParams()
+        window.sessionStorage.removeItem(spotifyPkceStorageKey())
+        await syncSpotifyCapsule(currentUser.id, {
+          period: cached.period || spotifyCapsulePeriod,
+          silent: true,
+        })
+      } catch (error) {
+        cleanupSpotifyAuthParams()
+        window.sessionStorage.removeItem(spotifyPkceStorageKey())
+        setErrorMessage(toMessage(error, 'Falha ao concluir a conexao com Spotify.'))
+      } finally {
+        spotifyAuthProcessingRef.current = false
+      }
+    })()
+  }, [currentUser, spotifyCapsulePeriod, syncSpotifyCapsule, writeSpotifyTokenCache])
 
   useEffect(() => {
     if (!isSupabaseConfigured || !currentUser?.id) {
@@ -2025,7 +2631,7 @@ function App() {
     try {
       if (authMode === 'signin') {
         await signIn({ email, password })
-        setStatusMessage('Login realizado com sucesso.')
+        setStatusMessage('')
       } else {
         const data = await signUp({ name, email, password })
 
@@ -2694,12 +3300,289 @@ function App() {
     setPublicProfile(null)
   }
 
-  const toggleCommunityJoin = (communityId) => {
-    setJoinedCommunities((current) => ({ ...current, [communityId]: !current[communityId] }))
+  const connectSpotifyCapsule = async () => {
+    if (!currentUser?.id) {
+      setErrorMessage('Entre na sua conta para conectar com Spotify.')
+      return
+    }
+
+    if (!spotifyCapsuleClientId) {
+      setErrorMessage('Defina VITE_SPOTIFY_CLIENT_ID no .env para ativar conexao Spotify.')
+      return
+    }
+
+    try {
+      const verifier = randomSpotifyPkceString(96)
+      const challenge = await makeSpotifyCodeChallenge(verifier)
+      const state = `waveloop_spotify_${crypto.randomUUID()}`
+
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(
+          spotifyPkceStorageKey(),
+          JSON.stringify({
+            state,
+            verifier,
+            userId: currentUser.id,
+            period: spotifyCapsulePeriod,
+            createdAt: Date.now(),
+          }),
+        )
+      }
+
+      const authorizeUrl = new URL('https://accounts.spotify.com/authorize')
+      authorizeUrl.searchParams.set('response_type', 'code')
+      authorizeUrl.searchParams.set('client_id', spotifyCapsuleClientId)
+      authorizeUrl.searchParams.set('redirect_uri', spotifyCapsuleRedirectUri)
+      authorizeUrl.searchParams.set('scope', spotifyCapsuleScopes.join(' '))
+      authorizeUrl.searchParams.set('code_challenge_method', 'S256')
+      authorizeUrl.searchParams.set('code_challenge', challenge)
+      authorizeUrl.searchParams.set('state', state)
+      authorizeUrl.searchParams.set('show_dialog', 'true')
+
+      window.location.assign(authorizeUrl.toString())
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel iniciar conexao com Spotify.'))
+    }
   }
 
-  const togglePlaylistSave = (playlistId) => {
-    setSavedPlaylists((current) => ({ ...current, [playlistId]: !current[playlistId] }))
+  const disconnectSpotifyCapsule = async () => {
+    if (!currentUser?.id) {
+      return
+    }
+
+    if (!isSupabaseConfigured) {
+      writeSpotifyTokenCache(currentUser.id, null)
+      setSpotifyCapsuleConnection(null)
+      setSpotifyCapsuleMine(null)
+      setSpotifyCapsuleLeaderboard((current) => current.filter((entry) => entry.userId !== currentUser.id))
+      setStatusMessage('Conta Spotify desconectada.')
+      return
+    }
+
+    setDisconnectingSpotifyCapsule(true)
+    try {
+      await deleteSpotifyConnection({ userId: currentUser.id })
+      writeSpotifyTokenCache(currentUser.id, null)
+      setSpotifyCapsuleConnection(null)
+      setSpotifyCapsuleMine(null)
+      setSpotifyCapsuleLeaderboard((current) => current.filter((entry) => entry.userId !== currentUser.id))
+      setStatusMessage('Conta Spotify desconectada.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel desconectar Spotify agora.'))
+    } finally {
+      setDisconnectingSpotifyCapsule(false)
+    }
+  }
+
+  const handleSyncSpotifyCapsule = async () => {
+    if (!currentUser?.id) {
+      setErrorMessage('Entre na sua conta para sincronizar Spotify.')
+      return
+    }
+
+    await syncSpotifyCapsule(currentUser.id, { period: spotifyCapsulePeriod })
+  }
+
+  const toggleCommunityJoin = async (communityId) => {
+    if (!currentUser?.id || !communityId) {
+      setErrorMessage('Entre na sua conta para participar de comunidades.')
+      return
+    }
+
+    if (!isSupabaseConfigured) {
+      setCommunities((current) =>
+        current.map((community) =>
+          community.id === communityId
+            ? {
+                ...community,
+                joined: !community.joined,
+                members: Math.max(0, Number(community.members || 0) + (community.joined ? -1 : 1)),
+              }
+            : community,
+        ),
+      )
+      return
+    }
+
+    try {
+      const result = await toggleCommunityMembership({
+        communityId,
+        userId: currentUser.id,
+      })
+
+      setCommunities((current) =>
+        current.map((community) =>
+          community.id === communityId
+            ? {
+                ...community,
+                joined: result.joined,
+                members: result.members,
+              }
+            : community,
+        ),
+      )
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel atualizar sua comunidade agora.'))
+    }
+  }
+
+  const togglePlaylistSave = async (playlistId) => {
+    if (!currentUser?.id || !playlistId) {
+      setErrorMessage('Entre na sua conta para salvar playlists.')
+      return
+    }
+
+    if (!isSupabaseConfigured) {
+      setPlaylists((current) =>
+        current.map((playlist) =>
+          playlist.id === playlistId
+            ? {
+                ...playlist,
+                saved: !playlist.saved,
+                saves: Math.max(0, Number(playlist.saves || 0) + (playlist.saved ? -1 : 1)),
+              }
+            : playlist,
+        ),
+      )
+      return
+    }
+
+    try {
+      const result = await toggleSaveSpotifyPlaylist({
+        playlistId,
+        userId: currentUser.id,
+      })
+
+      setPlaylists((current) =>
+        current.map((playlist) =>
+          playlist.id === playlistId
+            ? {
+                ...playlist,
+                saved: result.saved,
+                saves: result.saves,
+              }
+            : playlist,
+        ),
+      )
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel salvar essa playlist agora.'))
+    }
+  }
+
+  const submitCommunity = async (event) => {
+    event.preventDefault()
+
+    if (!currentUser?.id) {
+      setErrorMessage('Entre na sua conta para criar comunidades.')
+      return
+    }
+
+    const name = communityDraft.name.trim()
+    const description = communityDraft.description.trim()
+    const themeColor = communityDraft.themeColor.trim() || '#3b82f6'
+
+    if (name.length < 3) {
+      setErrorMessage('Nome da comunidade precisa ter ao menos 3 caracteres.')
+      return
+    }
+
+    setCreatingCommunity(true)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        const newCommunity = {
+          id: `local-community-${Date.now()}`,
+          name,
+          description,
+          members: 1,
+          creatorId: currentUser.id,
+          creatorName: currentUser.name,
+          creatorHandle: normalizeHandle(currentUser.handle),
+          themeColor,
+          joined: true,
+        }
+        setCommunities((current) => [newCommunity, ...current])
+      } else {
+        const created = await createCommunity({
+          userId: currentUser.id,
+          name,
+          description,
+          themeColor,
+        })
+        setCommunities((current) => [created, ...current.filter((community) => community.id !== created.id)])
+      }
+
+      setCommunityDraft({
+        name: '',
+        description: '',
+        themeColor: '#3b82f6',
+      })
+      setStatusMessage('Comunidade criada com sucesso.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel criar comunidade.'))
+    } finally {
+      setCreatingCommunity(false)
+    }
+  }
+
+  const submitPlaylist = async (event) => {
+    event.preventDefault()
+
+    if (!currentUser?.id) {
+      setErrorMessage('Entre na sua conta para cadastrar playlists.')
+      return
+    }
+
+    const spotify = parseSpotifyUrl(playlistDraft.spotifyUrl)
+    if (!spotify || spotify.type !== 'playlist') {
+      setErrorMessage('Use um link valido de playlist do Spotify.')
+      return
+    }
+
+    const title = playlistDraft.title.trim() || 'Playlist personalizada'
+    const description = playlistDraft.description.trim()
+
+    setCreatingPlaylist(true)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        const newPlaylist = {
+          id: `local-playlist-${Date.now()}`,
+          title,
+          description,
+          spotifyUrl: spotify.url,
+          spotifyType: 'playlist',
+          creatorId: currentUser.id,
+          creatorName: currentUser.name,
+          creatorHandle: normalizeHandle(currentUser.handle),
+          saves: 1,
+          saved: true,
+          sampleTrack: null,
+        }
+        setPlaylists((current) => [newPlaylist, ...current])
+      } else {
+        const created = await createSpotifyPlaylist({
+          userId: currentUser.id,
+          title,
+          description,
+          spotifyUrl: spotify.url,
+        })
+        setPlaylists((current) => [created, ...current.filter((playlist) => playlist.id !== created.id)])
+      }
+
+      setPlaylistDraft({
+        title: '',
+        description: '',
+        spotifyUrl: '',
+      })
+      setStatusMessage('Playlist adicionada e salva no seu perfil.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel criar playlist.'))
+    } finally {
+      setCreatingPlaylist(false)
+    }
   }
 
   const toggleEventSave = (eventId) => {
@@ -2732,6 +3615,21 @@ function App() {
     }))
     setShowComposer(true)
     setStatusMessage(`Faixa pronta no composer: ${track.title} - ${track.artist}`)
+    setErrorMessage('')
+  }
+
+  const applyPlaylistInComposer = (playlist) => {
+    if (!playlist?.spotifyUrl) {
+      return
+    }
+
+    activateNav('Feed')
+    setShowComposer(true)
+    setComposer((current) => ({
+      ...current,
+      spotifyUrl: playlist.spotifyUrl,
+    }))
+    setStatusMessage(`Playlist pronta no composer: ${playlist.title}.`)
     setErrorMessage('')
   }
 
@@ -3192,14 +4090,50 @@ function App() {
                 <h2>Comunidades em alta</h2>
                 <p>Entre em grupos para trocar feedback e collabs.</p>
               </header>
+              <form className="mode-create-form" onSubmit={submitCommunity}>
+                <div className="mode-create-grid">
+                  <input
+                    type="text"
+                    value={communityDraft.name}
+                    onChange={(event) => setCommunityDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Nome da comunidade"
+                  />
+                  <input
+                    type="text"
+                    value={communityDraft.description}
+                    onChange={(event) => setCommunityDraft((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="Descricao curta"
+                  />
+                  <label className="mode-create-color">
+                    Cor
+                    <input
+                      type="color"
+                      value={communityDraft.themeColor}
+                      onChange={(event) => setCommunityDraft((current) => ({ ...current, themeColor: event.target.value }))}
+                    />
+                  </label>
+                </div>
+                <button type="submit" className="primary-btn" disabled={creatingCommunity}>
+                  {creatingCommunity ? 'Criando...' : 'Criar comunidade'}
+                </button>
+              </form>
+              {loadingCommunities && <div className="notice">Carregando comunidades...</div>}
               <div className="mode-board-grid">
-                {communityCards.map((community) => {
-                  const joined = joinedCommunities[community.id]
+                {communities.map((community) => {
+                  const joined = Boolean(community.joined)
                   return (
-                    <article key={community.id} className="mode-card">
+                    <article
+                      key={community.id}
+                      className="mode-card"
+                      style={{
+                        borderColor: community.themeColor || undefined,
+                      }}
+                    >
                       <h3>{community.name}</h3>
-                      <p>{community.description}</p>
-                      <span>{compact(community.members)} membros</span>
+                      <p>{community.description || 'Comunidade sem descricao por enquanto.'}</p>
+                      <span>
+                        {compact(community.members || 0)} membros • @{normalizeHandle(community.creatorHandle || 'comunidade')}
+                      </span>
                       <button
                         type="button"
                         className={joined ? 'secondary-btn followed' : 'secondary-btn'}
@@ -3211,6 +4145,9 @@ function App() {
                   )
                 })}
               </div>
+              {!loadingCommunities && communities.length === 0 && (
+                <div className="notice">Nenhuma comunidade criada ainda. Crie a primeira.</div>
+              )}
             </section>
           )}
 
@@ -3248,14 +4185,42 @@ function App() {
                 <h2>Playlists curadas</h2>
                 <p>Salve playlists e use uma faixa no seu proximo post.</p>
               </header>
+              <form className="mode-create-form" onSubmit={submitPlaylist}>
+                <div className="mode-create-grid">
+                  <input
+                    type="text"
+                    value={playlistDraft.title}
+                    onChange={(event) => setPlaylistDraft((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="Titulo da playlist"
+                  />
+                  <input
+                    type="text"
+                    value={playlistDraft.spotifyUrl}
+                    onChange={(event) => setPlaylistDraft((current) => ({ ...current, spotifyUrl: event.target.value }))}
+                    placeholder="https://open.spotify.com/playlist/..."
+                  />
+                  <input
+                    type="text"
+                    value={playlistDraft.description}
+                    onChange={(event) => setPlaylistDraft((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="Descricao (opcional)"
+                  />
+                </div>
+                <button type="submit" className="primary-btn" disabled={creatingPlaylist}>
+                  {creatingPlaylist ? 'Salvando...' : 'Adicionar playlist'}
+                </button>
+              </form>
+              {loadingPlaylists && <div className="notice">Carregando playlists...</div>}
               <div className="mode-board-grid">
-                {playlistCards.map((playlist) => {
-                  const saved = savedPlaylists[playlist.id]
+                {playlists.map((playlist) => {
+                  const saved = Boolean(playlist.saved)
                   return (
                     <article key={playlist.id} className="mode-card">
                       <h3>{playlist.title}</h3>
-                      <p>{playlist.curator}</p>
-                      <span>{playlist.tracks} faixas</span>
+                      <p>{playlist.description || `Curadoria por ${playlist.creatorName || 'Comunidade'}`}</p>
+                      <span>
+                        {compact(playlist.saves || 0)} salvos • @{normalizeHandle(playlist.creatorHandle || 'usuario')}
+                      </span>
                       <div className="mode-card-actions">
                         <button
                           type="button"
@@ -3264,14 +4229,147 @@ function App() {
                         >
                           {saved ? 'Salva' : 'Salvar'}
                         </button>
-                        <button type="button" className="secondary-btn" onClick={() => applyTrendingTrack(playlist.sampleTrack)}>
-                          Usar faixa
+                        <button type="button" className="secondary-btn" onClick={() => applyPlaylistInComposer(playlist)}>
+                          Usar no post
                         </button>
+                        <a href={playlist.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn mode-link-btn">
+                          Abrir Spotify
+                        </a>
                       </div>
                     </article>
                   )
                 })}
               </div>
+              {!loadingPlaylists && playlists.length === 0 && (
+                <div className="notice">Nenhuma playlist cadastrada ainda. Adicione uma playlist Spotify.</div>
+              )}
+
+              <section className="spotify-capsule-board">
+                <header className="spotify-capsule-head">
+                  <div>
+                    <h3>Capsula Spotify</h3>
+                    <p>Sincronize sua conta e entre na competicao de quem mais ouve musica.</p>
+                  </div>
+                  <div className="spotify-capsule-actions">
+                    {spotifyCapsuleConnection ? (
+                      <>
+                        <button type="button" className="secondary-btn" onClick={handleSyncSpotifyCapsule} disabled={syncingSpotifyCapsule}>
+                          {syncingSpotifyCapsule ? 'Sincronizando...' : 'Sincronizar agora'}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={disconnectSpotifyCapsule}
+                          disabled={disconnectingSpotifyCapsule}
+                        >
+                          {disconnectingSpotifyCapsule ? 'Saindo...' : 'Desconectar'}
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="primary-btn" onClick={connectSpotifyCapsule}>
+                        Conectar Spotify
+                      </button>
+                    )}
+                  </div>
+                </header>
+
+                <div className="spotify-capsule-periods">
+                  {spotifyCapsulePeriods.map((periodOption) => (
+                    <button
+                      key={`capsule-period-${periodOption.id}`}
+                      type="button"
+                      className={spotifyCapsulePeriod === periodOption.id ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setSpotifyCapsulePeriod(periodOption.id)}
+                    >
+                      {periodOption.label}
+                    </button>
+                  ))}
+                </div>
+
+                {loadingSpotifyCapsule && <div className="notice">Carregando capsula Spotify...</div>}
+
+                {!loadingSpotifyCapsule && spotifyCapsuleConnection && (
+                  <div className="spotify-capsule-connection">
+                    <div className="avatar">
+                      {spotifyCapsuleConnection.avatarUrl ? (
+                        <img src={spotifyCapsuleConnection.avatarUrl} alt={spotifyCapsuleConnection.displayName || 'Spotify'} />
+                      ) : (
+                        initials(spotifyCapsuleConnection.displayName || currentUser?.name || 'Spotify')
+                      )}
+                    </div>
+                    <div>
+                      <strong>{spotifyCapsuleConnection.displayName || 'Conta conectada'}</strong>
+                      <p>
+                        {spotifyCapsuleConnection.country || 'Spotify'} • ultimo sync{' '}
+                        {spotifyCapsuleConnection.lastSyncedAt ? timeAgo(spotifyCapsuleConnection.lastSyncedAt) : 'agora'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {!loadingSpotifyCapsule && !spotifyCapsuleConnection && (
+                  <div className="notice warn">
+                    Conecte sua conta Spotify para sincronizar sua capsula e entrar no ranking.
+                  </div>
+                )}
+
+                {spotifyCapsuleMine && (
+                  <article className="spotify-capsule-mine">
+                    <div className="spotify-capsule-metrics">
+                      <div>
+                        <span>Score</span>
+                        <strong>{compact(spotifyCapsuleMine.score)}</strong>
+                      </div>
+                      <div>
+                        <span>Minutos</span>
+                        <strong>{compact(spotifyCapsuleMine.minutesEstimate)}</strong>
+                      </div>
+                      <div>
+                        <span>Recentes</span>
+                        <strong>{compact(spotifyCapsuleMine.recentPlays)}</strong>
+                      </div>
+                    </div>
+                    <p className="spotify-capsule-top">
+                      Top faixas:{' '}
+                      {(spotifyCapsuleMine.topTracks || [])
+                        .slice(0, 3)
+                        .map((track) => track?.name)
+                        .filter(Boolean)
+                        .join(' • ') || 'Sincronize para ver seus destaques'}
+                    </p>
+                  </article>
+                )}
+
+                <div className="spotify-capsule-ranking">
+                  {(spotifyCapsuleLeaderboard || []).map((entry, index) => {
+                    const isMe = entry.userId === currentUser?.id
+                    return (
+                      <article key={entry.id || `${entry.userId}-${index}`} className={isMe ? 'spotify-rank-row is-me' : 'spotify-rank-row'}>
+                        <span className="spotify-rank-pos">#{index + 1}</span>
+                        <div className="avatar">
+                          {entry.user?.avatarUrl ? (
+                            <img src={entry.user.avatarUrl} alt={entry.user?.name || 'User'} />
+                          ) : (
+                            initials(entry.user?.name || 'User')
+                          )}
+                        </div>
+                        <div className="spotify-rank-user">
+                          <strong>{entry.user?.name || 'Usuario'}</strong>
+                          <p>@{normalizeHandle(entry.user?.handle || 'user')}</p>
+                        </div>
+                        <div className="spotify-rank-score">
+                          <strong>{compact(entry.score)}</strong>
+                          <span>pts</span>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+
+                {!loadingSpotifyCapsule && (spotifyCapsuleLeaderboard || []).length === 0 && (
+                  <div className="notice">Sem ranking para {capsulePeriodLabel(spotifyCapsulePeriod)} ainda.</div>
+                )}
+              </section>
             </section>
           )}
 
@@ -3434,7 +4532,7 @@ function App() {
                   </article>
                   <article className="profile-ig-list-item">
                     <strong>Playlists salvas</strong>
-                    <p>{Object.values(savedPlaylists).filter(Boolean).length} playlists</p>
+                    <p>{playlists.filter((playlist) => playlist.saved).length} playlists</p>
                   </article>
                   <article className="profile-ig-list-item">
                     <strong>Eventos salvos</strong>

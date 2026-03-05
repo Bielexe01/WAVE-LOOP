@@ -541,3 +541,219 @@ using (
   bucket_id = 'media'
   and (storage.foldername(name))[1] = auth.uid()::text
 );
+
+create table if not exists public.communities (
+  id uuid primary key default gen_random_uuid(),
+  creator_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null check (char_length(name) between 3 and 80),
+  slug text not null unique check (char_length(slug) >= 3),
+  description text not null default '' check (char_length(description) <= 500),
+  theme_color text not null default '#3b82f6',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.community_memberships (
+  community_id uuid not null references public.communities(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  role text not null default 'member' check (role in ('owner', 'member')),
+  created_at timestamptz not null default now(),
+  primary key (community_id, user_id)
+);
+
+create table if not exists public.spotify_playlists (
+  id uuid primary key default gen_random_uuid(),
+  creator_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null check (char_length(title) between 2 and 120),
+  description text not null default '' check (char_length(description) <= 500),
+  spotify_url text not null,
+  spotify_type text not null default 'playlist' check (spotify_type = 'playlist'),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.playlist_saves (
+  playlist_id uuid not null references public.spotify_playlists(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (playlist_id, user_id)
+);
+
+create index if not exists idx_communities_created_at on public.communities(created_at desc);
+create index if not exists idx_communities_creator on public.communities(creator_id);
+create index if not exists idx_community_memberships_user on public.community_memberships(user_id);
+create index if not exists idx_community_memberships_community on public.community_memberships(community_id);
+create index if not exists idx_spotify_playlists_created_at on public.spotify_playlists(created_at desc);
+create index if not exists idx_spotify_playlists_creator on public.spotify_playlists(creator_id);
+create index if not exists idx_playlist_saves_user on public.playlist_saves(user_id);
+create index if not exists idx_playlist_saves_playlist on public.playlist_saves(playlist_id);
+
+alter table public.communities enable row level security;
+alter table public.community_memberships enable row level security;
+alter table public.spotify_playlists enable row level security;
+alter table public.playlist_saves enable row level security;
+
+drop policy if exists "communities_select_all" on public.communities;
+create policy "communities_select_all"
+on public.communities
+for select
+using (true);
+
+drop policy if exists "communities_insert_own" on public.communities;
+create policy "communities_insert_own"
+on public.communities
+for insert
+with check (auth.uid() = creator_id);
+
+drop policy if exists "communities_update_own" on public.communities;
+create policy "communities_update_own"
+on public.communities
+for update
+using (auth.uid() = creator_id)
+with check (auth.uid() = creator_id);
+
+drop policy if exists "communities_delete_own" on public.communities;
+create policy "communities_delete_own"
+on public.communities
+for delete
+using (auth.uid() = creator_id);
+
+drop policy if exists "community_memberships_select_all" on public.community_memberships;
+create policy "community_memberships_select_all"
+on public.community_memberships
+for select
+using (true);
+
+drop policy if exists "community_memberships_insert_own" on public.community_memberships;
+create policy "community_memberships_insert_own"
+on public.community_memberships
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "community_memberships_delete_own" on public.community_memberships;
+create policy "community_memberships_delete_own"
+on public.community_memberships
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists "spotify_playlists_select_all" on public.spotify_playlists;
+create policy "spotify_playlists_select_all"
+on public.spotify_playlists
+for select
+using (true);
+
+drop policy if exists "spotify_playlists_insert_own" on public.spotify_playlists;
+create policy "spotify_playlists_insert_own"
+on public.spotify_playlists
+for insert
+with check (auth.uid() = creator_id);
+
+drop policy if exists "spotify_playlists_update_own" on public.spotify_playlists;
+create policy "spotify_playlists_update_own"
+on public.spotify_playlists
+for update
+using (auth.uid() = creator_id)
+with check (auth.uid() = creator_id);
+
+drop policy if exists "spotify_playlists_delete_own" on public.spotify_playlists;
+create policy "spotify_playlists_delete_own"
+on public.spotify_playlists
+for delete
+using (auth.uid() = creator_id);
+
+drop policy if exists "playlist_saves_select_all" on public.playlist_saves;
+create policy "playlist_saves_select_all"
+on public.playlist_saves
+for select
+using (true);
+
+drop policy if exists "playlist_saves_insert_own" on public.playlist_saves;
+create policy "playlist_saves_insert_own"
+on public.playlist_saves
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "playlist_saves_delete_own" on public.playlist_saves;
+create policy "playlist_saves_delete_own"
+on public.playlist_saves
+for delete
+using (auth.uid() = user_id);
+
+create table if not exists public.spotify_connections (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  spotify_user_id text not null unique,
+  display_name text,
+  avatar_url text,
+  country text,
+  product text,
+  connected_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  last_synced_at timestamptz
+);
+
+create table if not exists public.spotify_capsule_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  period text not null default '4_weeks' check (period in ('4_weeks', '6_months', 'all_time')),
+  score integer not null default 0 check (score >= 0),
+  top_tracks jsonb not null default '[]'::jsonb,
+  top_artists jsonb not null default '[]'::jsonb,
+  recent_plays integer not null default 0 check (recent_plays >= 0),
+  minutes_estimate integer not null default 0 check (minutes_estimate >= 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_spotify_connections_last_synced on public.spotify_connections(last_synced_at desc nulls last);
+create index if not exists idx_spotify_capsule_period_score on public.spotify_capsule_snapshots(period, score desc, created_at desc);
+create index if not exists idx_spotify_capsule_user_period on public.spotify_capsule_snapshots(user_id, period, created_at desc);
+
+alter table public.spotify_connections enable row level security;
+alter table public.spotify_capsule_snapshots enable row level security;
+
+drop policy if exists "spotify_connections_select_own" on public.spotify_connections;
+create policy "spotify_connections_select_own"
+on public.spotify_connections
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists "spotify_connections_insert_own" on public.spotify_connections;
+create policy "spotify_connections_insert_own"
+on public.spotify_connections
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "spotify_connections_update_own" on public.spotify_connections;
+create policy "spotify_connections_update_own"
+on public.spotify_connections
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "spotify_connections_delete_own" on public.spotify_connections;
+create policy "spotify_connections_delete_own"
+on public.spotify_connections
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists "spotify_capsule_select_all" on public.spotify_capsule_snapshots;
+create policy "spotify_capsule_select_all"
+on public.spotify_capsule_snapshots
+for select
+using (true);
+
+drop policy if exists "spotify_capsule_insert_own" on public.spotify_capsule_snapshots;
+create policy "spotify_capsule_insert_own"
+on public.spotify_capsule_snapshots
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "spotify_capsule_update_own" on public.spotify_capsule_snapshots;
+create policy "spotify_capsule_update_own"
+on public.spotify_capsule_snapshots
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "spotify_capsule_delete_own" on public.spotify_capsule_snapshots;
+create policy "spotify_capsule_delete_own"
+on public.spotify_capsule_snapshots
+for delete
+using (auth.uid() = user_id);
