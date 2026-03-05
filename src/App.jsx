@@ -2833,17 +2833,7 @@ function App() {
       <div className="app-shell">
         <aside className="panel left-panel appear-up">
           <div className="brand">WaveLoop</div>
-          <div className="theme-switch" role="group" aria-label="Modo de tema">
-            <button
-              type="button"
-              className="theme-icon-toggle"
-              onClick={() => setThemeMode((current) => (current === 'dark' ? 'clean' : 'dark'))}
-              aria-label={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
-              title={themeMode === 'dark' ? 'Ativar modo clean' : 'Ativar modo dark'}
-            >
-              <ThemeModeIcon mode={themeMode} />
-            </button>
-          </div>
+          
 
           {!isSupabaseConfigured && <div className="notice warn">Modo demo sem backend ativo.</div>}
 

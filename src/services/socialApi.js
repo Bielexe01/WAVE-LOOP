@@ -1171,31 +1171,109 @@ function normalizeFileName(fileName) {
   return fileName.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-')
 }
 
+const audioExtensions = new Set(['mp3', 'm4a', 'wav', 'ogg', 'oga', 'aac', 'flac', 'webm', 'opus'])
+const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'heic', 'heif'])
+
+function getFileExtension(file) {
+  const fileName = String(file?.name || '').toLowerCase()
+  const parts = fileName.split('.')
+  return parts.length > 1 ? parts.pop() || '' : ''
+}
+
+function inferMediaKind(file) {
+  if (!file) {
+    return null
+  }
+
+  const mime = String(file.type || '').toLowerCase()
+  if (mime.startsWith('image/')) {
+    return 'image'
+  }
+
+  if (mime.startsWith('audio/')) {
+    return 'audio'
+  }
+
+  const extension = getFileExtension(file)
+  if (imageExtensions.has(extension)) {
+    return 'image'
+  }
+
+  if (audioExtensions.has(extension)) {
+    return 'audio'
+  }
+
+  return null
+}
+
+function inferContentType(file) {
+  const mime = String(file?.type || '').toLowerCase()
+  if (mime) {
+    return mime
+  }
+
+  const extension = getFileExtension(file)
+  const mimeByExtension = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    svg: 'image/svg+xml',
+    avif: 'image/avif',
+    heic: 'image/heic',
+    heif: 'image/heif',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    oga: 'audio/ogg',
+    aac: 'audio/aac',
+    flac: 'audio/flac',
+    webm: 'audio/webm',
+    opus: 'audio/ogg',
+  }
+
+  return mimeByExtension[extension] || 'application/octet-stream'
+}
+
 async function uploadMedia(userId, file, category = 'posts') {
   if (!file) {
     return null
   }
 
   const client = requireSupabase()
+  const mediaKind = inferMediaKind(file)
+  if (!mediaKind) {
+    throw new Error('Formato de arquivo nao suportado. Use imagem ou audio valido.')
+  }
+
   const extension = (file.name.split('.').pop() || 'file').toLowerCase()
   const baseName = file.name.replace(/\.[^/.]+$/, '')
   const safeName = normalizeFileName(baseName || 'upload')
   const path = `${userId}/${category}/${Date.now()}-${safeName}.${extension}`
+  const contentType = inferContentType(file)
 
   const { error: uploadError } = await client.storage.from(SUPABASE_MEDIA_BUCKET).upload(path, file, {
     cacheControl: '3600',
     upsert: false,
+    contentType,
   })
 
   if (uploadError) {
-    throw uploadError
+    const rawMessage = String(uploadError.message || '')
+    if (rawMessage.toLowerCase().includes('mime')) {
+      throw new Error('O bucket media bloqueou este tipo de audio. Libere MIME de audio nas configuracoes do Storage.')
+    }
+    throw new Error(rawMessage || 'Falha no upload de midia.')
   }
 
   const { data } = client.storage.from(SUPABASE_MEDIA_BUCKET).getPublicUrl(path)
 
   return {
     url: data.publicUrl,
-    type: file.type.startsWith('audio/') ? 'audio' : 'image',
+    type: mediaKind,
   }
 }
 

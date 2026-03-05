@@ -3414,7 +3414,7 @@
   --ig-blue: #5cb5ff;
   --ig-danger: #ff6d82;
   background:
-    radial-gradient(circle at 8% 3%, rgba(41, 131, 255, 0.18), transparent 24%),
+    radial-gradient(circle at 8% 3%, rgba(41, 131, 255, 0.18), transparent 100%),
     radial-gradient(circle at 100% 0%, rgba(255, 86, 109, 0.16), transparent 28%),
     var(--ig-bg);
   color: var(--ig-text);
@@ -5265,7 +5265,7 @@
 .scene-root.theme-dark .feed-inline-header,
 .scene-root.theme-dark .profile-ig,
 .scene-root.theme-dark .auth-card {
-  background: var(--ig-surface) !important;
+  background: #0f172800 !important;
   border-color: var(--ig-border) !important;
   color: var(--ig-text);
 }
