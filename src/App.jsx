@@ -580,6 +580,14 @@ const navPresentation = {
   Perfil: { label: 'Perfil', mobile: 'Perfil', icon: 'profile' },
 }
 
+const directMobileThemePresets = [
+  { id: 'midnight', label: 'Noite', color: '#020817' },
+  { id: 'ocean', label: 'Oceano', color: '#07233d' },
+  { id: 'forest', label: 'Floresta', color: '#10261f' },
+  { id: 'wine', label: 'Vinho', color: '#311223' },
+  { id: 'graphite', label: 'Grafite', color: '#1a1f2b' },
+]
+
 function App() {
   const [activeNav, setActiveNav] = useState('Feed')
   const [posts, setPosts] = useState(isSupabaseConfigured ? [] : demoPosts)
@@ -626,6 +634,17 @@ function App() {
   const [loadingDirect, setLoadingDirect] = useState(false)
   const [sendingDirect, setSendingDirect] = useState(false)
   const [directDraft, setDirectDraft] = useState('')
+  const [directMobileView, setDirectMobileView] = useState('list')
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    return window.matchMedia('(max-width: 760px)').matches
+  })
+  const [directThemeOpen, setDirectThemeOpen] = useState(false)
+  const [directMobileBg, setDirectMobileBg] = useState(directMobileThemePresets[0].color)
+  const [profileTab, setProfileTab] = useState('posts')
   const [stories, setStories] = useState([])
   const [loadingStories, setLoadingStories] = useState(false)
   const [storyComposerOpen, setStoryComposerOpen] = useState(false)
@@ -790,6 +809,13 @@ function App() {
     return activeStoryGroup.items[storyViewer.itemIndex] || null
   }, [activeStoryGroup, storyViewer.itemIndex])
 
+  const directThemeStorageKey = useMemo(() => {
+    return `waveloop:direct-mobile-bg:${currentUser?.id || 'anon'}`
+  }, [currentUser?.id])
+
+  const showDirectListPane = !isMobileViewport || directMobileView === 'list'
+  const showDirectChatPane = !isMobileViewport || directMobileView === 'chat'
+
   const postsForView = useMemo(() => {
     if (activeNav === 'Direct') {
       return []
@@ -851,6 +877,18 @@ function App() {
       mixes: ownPosts.length,
     }
   }, [currentUser, followStats, posts])
+
+  const ownProfilePosts = useMemo(() => {
+    if (!currentUser) {
+      return []
+    }
+
+    return posts.filter((post) => post.user.id === currentUser.id)
+  }, [currentUser, posts])
+
+  const ownProfileTrackPosts = useMemo(() => {
+    return ownProfilePosts.filter((post) => post.track)
+  }, [ownProfilePosts])
 
   const engagement = useMemo(() => {
     return posts.reduce(
@@ -1201,6 +1239,27 @@ function App() {
   }, [mediaPreview, profileAvatarPreview, storyMediaPreview])
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const mediaQuery = window.matchMedia('(max-width: 760px)')
+    const apply = (event) => {
+      setIsMobileViewport(event.matches)
+    }
+
+    setIsMobileViewport(mediaQuery.matches)
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', apply)
+      return () => mediaQuery.removeEventListener('change', apply)
+    }
+
+    mediaQuery.addListener(apply)
+    return () => mediaQuery.removeListener(apply)
+  }, [])
+
+  useEffect(() => {
     if (!currentUser) {
       return
     }
@@ -1292,6 +1351,9 @@ function App() {
       }
 
       setActiveDirectThreadId(threadId)
+      if (isMobileViewport) {
+        setDirectMobileView('chat')
+      }
       setDirectThreads((current) =>
         current.map((thread) =>
           thread.id === threadId
@@ -1319,7 +1381,7 @@ function App() {
         }
       }
     },
-    [activateNav, currentUser, loadDirectInbox],
+    [activateNav, currentUser, isMobileViewport, loadDirectInbox],
   )
 
   const sendDirectMessage = async (event) => {
@@ -1423,6 +1485,9 @@ function App() {
         })
         await loadDirectInbox(currentUser.id, threadId)
         activateNav('Direct')
+        if (isMobileViewport) {
+          setDirectMobileView('chat')
+        }
       } catch (error) {
         setErrorMessage(toMessage(error, 'Nao foi possivel iniciar este direct agora.'))
       }
@@ -1458,6 +1523,9 @@ function App() {
     setDirectThreads((current) => sortDirectThreads([newThread, ...current]))
     setActiveDirectThreadId(newThread.id)
     activateNav('Direct')
+    if (isMobileViewport) {
+      setDirectMobileView('chat')
+    }
   }
 
   const clearStoryComposerMedia = useCallback(() => {
@@ -2030,6 +2098,51 @@ function App() {
     }
   }, [activeNav, publicProfile])
 
+  useEffect(() => {
+    if (activeNav !== 'Perfil') {
+      setProfileTab('posts')
+    }
+  }, [activeNav])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const saved = window.localStorage.getItem(directThemeStorageKey)
+    if (saved) {
+      setDirectMobileBg(saved)
+      return
+    }
+
+    setDirectMobileBg(directMobileThemePresets[0].color)
+  }, [directThemeStorageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(directThemeStorageKey, directMobileBg)
+  }, [directMobileBg, directThemeStorageKey])
+
+  useEffect(() => {
+    if (activeNav !== 'Direct') {
+      setDirectThemeOpen(false)
+    }
+  }, [activeNav])
+
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setDirectMobileView('chat')
+      return
+    }
+
+    if (activeNav === 'Direct') {
+      setDirectMobileView('list')
+    }
+  }, [activeNav, isMobileViewport])
+
   const toggleReaction = async (postId, kind) => {
     if (!currentUser) {
       return
@@ -2553,9 +2666,18 @@ function App() {
     return className
   }
 
+  const isDirectFullscreen = activeNav === 'Direct' && !publicProfile
+  const rootClassName = [
+    'scene-root',
+    isDirectFullscreen ? 'is-direct-fullscreen' : '',
+    isMobileViewport && isDirectFullscreen ? 'is-mobile-direct' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   if (isSupabaseConfigured && loadingAuth) {
     return (
-      <div className="scene-root">
+      <div className={rootClassName}>
         <AmbientBackdrop />
         <div className="auth-shell">
           <div className="auth-card">
@@ -2569,7 +2691,7 @@ function App() {
 
   if (isSupabaseConfigured && !session) {
     return (
-      <div className="scene-root">
+      <div className={rootClassName}>
         <AmbientBackdrop />
         <div className="auth-shell">
           <div className="auth-card">
@@ -2629,7 +2751,7 @@ function App() {
   }
 
   return (
-    <div className="scene-root">
+    <div className={rootClassName}>
       <AmbientBackdrop />
 
       <div className="app-shell">
@@ -3002,31 +3124,50 @@ function App() {
           )}
 
           {activeNav === 'Perfil' && !publicProfile && (
-            <section className="mode-board profile-hub appear-up">
-              <header className="mode-board-head">
-                <h2>Seu perfil</h2>
-                <p>Gerencie seu perfil publico, mensagens e conteudo.</p>
+            <section className="profile-ig appear-up" aria-label="Seu perfil">
+              <header className="profile-ig-top">
+                <strong className="profile-ig-handle">@{normalizeHandle(currentUser?.handle || 'usuario')}</strong>
+                <button type="button" className="secondary-btn profile-ig-top-btn" onClick={openProfileEditor}>
+                  Editar
+                </button>
               </header>
-              <div className="profile-hub-grid">
-                <article>
-                  <strong>{currentUser?.name || 'Usuario'}</strong>
-                  <p>@{normalizeHandle(currentUser?.handle || 'usuario')}</p>
-                  <span>{currentUser?.bio || 'Atualize sua bio para destacar seu estilo.'}</span>
-                </article>
-                <article>
-                  <strong>{compact(profileStats.followers)}</strong>
-                  <p>Seguidores</p>
-                  <span>{compact(profileStats.following)} seguindo</span>
-                </article>
-                <article>
-                  <strong>{compact(totalDirectUnread)}</strong>
-                  <p>Mensagens nao lidas</p>
-                  <span>Direct ativo para collabs</span>
-                </article>
+
+              <div className="profile-ig-main">
+                <div className="avatar avatar-xl profile-ig-avatar">
+                  {currentUser?.avatarUrl ? (
+                    <img src={currentUser.avatarUrl} alt={currentUser.name || 'Usuario'} />
+                  ) : (
+                    initials(currentUser?.name || 'Usuario')
+                  )}
+                </div>
+
+                <div className="profile-ig-metrics">
+                  <article>
+                    <strong>{compact(ownProfilePosts.length)}</strong>
+                    <span>Publicacoes</span>
+                  </article>
+                  <article>
+                    <strong>{compact(profileStats.followers)}</strong>
+                    <span>Seguidores</span>
+                  </article>
+                  <article>
+                    <strong>{compact(profileStats.following)}</strong>
+                    <span>Seguindo</span>
+                  </article>
+                </div>
               </div>
-              <div className="profile-hub-actions">
+
+              <div className="profile-ig-bio">
+                <h3>{currentUser?.name || 'Usuario'}</h3>
+                <p>{currentUser?.bio || 'Produtor musical independente e apaixonado por novas sonoridades.'}</p>
+              </div>
+
+              <div className="profile-ig-actions">
                 <button type="button" className="secondary-btn" onClick={openProfileEditor}>
-                  Editar perfil
+                  Seguindo
+                </button>
+                <button type="button" className="secondary-btn" onClick={() => activateNav('Direct')}>
+                  Mensagem
                 </button>
                 <button
                   type="button"
@@ -3037,22 +3178,172 @@ function App() {
                     }
                   }}
                 >
-                  Ver perfil publico
-                </button>
-                <button type="button" className="secondary-btn" onClick={() => activateNav('Direct')}>
-                  Abrir direct
+                  Contato
                 </button>
               </div>
+
+              <div className="profile-ig-highlights">
+                <button type="button" className="profile-ig-highlight" onClick={openStoryComposer}>
+                  <span className="profile-ig-highlight-circle">+</span>
+                  <span>Novo</span>
+                </button>
+                {stories.slice(0, 4).map((group) => (
+                  <button
+                    type="button"
+                    key={`profile-highlight-${group.userId}`}
+                    className="profile-ig-highlight"
+                    onClick={() => openStoryGroup(group.userId)}
+                  >
+                    <span className="profile-ig-highlight-circle">
+                      {group.user.avatarUrl ? (
+                        <img src={group.user.avatarUrl} alt={group.user.name} />
+                      ) : (
+                        initials(group.user.name)
+                      )}
+                    </span>
+                    <span>{group.own ? 'Seu story' : group.user.name.split(' ')[0]}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="profile-ig-tabs" role="tablist" aria-label="Abas do perfil">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === 'posts'}
+                  className={profileTab === 'posts' ? 'active' : ''}
+                  onClick={() => setProfileTab('posts')}
+                >
+                  Posts
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === 'tracks'}
+                  className={profileTab === 'tracks' ? 'active' : ''}
+                  onClick={() => setProfileTab('tracks')}
+                >
+                  Faixas
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === 'about'}
+                  className={profileTab === 'about' ? 'active' : ''}
+                  onClick={() => setProfileTab('about')}
+                >
+                  Sobre
+                </button>
+              </div>
+
+              {profileTab === 'posts' && (
+                <div className="profile-ig-grid">
+                  {ownProfilePosts.length > 0 ? (
+                    ownProfilePosts.slice(0, 12).map((post) => (
+                      <article key={`profile-grid-${post.id}`} className="profile-ig-grid-item">
+                        {post.media && post.media.type !== 'audio' ? (
+                          <img src={post.media.url} alt={`Post de ${post.user.name}`} loading="lazy" />
+                        ) : (
+                          <div
+                            className="profile-ig-grid-fallback"
+                            style={{ backgroundImage: gradientFromSeed(`${post.id}-${post.mood}`) }}
+                          >
+                            <span>{post.track?.title || post.mood}</span>
+                          </div>
+                        )}
+                      </article>
+                    ))
+                  ) : (
+                    <p className="profile-ig-empty">Ainda nao existem publicacoes no seu perfil.</p>
+                  )}
+                </div>
+              )}
+
+              {profileTab === 'tracks' && (
+                <div className="profile-ig-list">
+                  {ownProfileTrackPosts.length > 0 ? (
+                    ownProfileTrackPosts.slice(0, 8).map((post) => (
+                      <article key={`profile-track-${post.id}`} className="profile-ig-list-item">
+                        <strong>{post.track.title}</strong>
+                        <p>{post.track.artist}</p>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="profile-ig-empty">Nenhuma faixa cadastrada nos seus posts ainda.</p>
+                  )}
+                </div>
+              )}
+
+              {profileTab === 'about' && (
+                <div className="profile-ig-list">
+                  <article className="profile-ig-list-item">
+                    <strong>Direct</strong>
+                    <p>{compact(totalDirectUnread)} mensagens nao lidas</p>
+                  </article>
+                  <article className="profile-ig-list-item">
+                    <strong>Playlists salvas</strong>
+                    <p>{Object.values(savedPlaylists).filter(Boolean).length} playlists</p>
+                  </article>
+                  <article className="profile-ig-list-item">
+                    <strong>Eventos salvos</strong>
+                    <p>{Object.values(savedEvents).filter(Boolean).length} eventos</p>
+                  </article>
+                </div>
+              )}
             </section>
           )}
 
           {activeNav === 'Direct' && !publicProfile && (
-            <section className="direct-board appear-up" aria-label="Direct">
-              <aside className="direct-threads">
+            <section
+              className="direct-board appear-up"
+              aria-label="Direct"
+              style={isMobileViewport ? { '--direct-mobile-bg': directMobileBg } : undefined}
+            >
+              <aside
+                className={
+                  showDirectListPane
+                    ? 'direct-threads direct-pane direct-pane-list is-active'
+                    : 'direct-threads direct-pane direct-pane-list is-inactive'
+                }
+              >
                 <header className="direct-board-head">
-                  <h2>Direct</h2>
-                  <span>{compact(totalDirectUnread)} nao lidas</span>
+                  <div>
+                    <h2>Direct</h2>
+                    <span>{compact(totalDirectUnread)} nao lidas</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn direct-theme-toggle"
+                    onClick={() => setDirectThemeOpen((current) => !current)}
+                  >
+                    Tema
+                  </button>
                 </header>
+                {directThemeOpen && (
+                  <div className="direct-theme-panel">
+                    <p>Cor de fundo</p>
+                    <div className="direct-theme-swatches">
+                      {directMobileThemePresets.map((preset) => (
+                        <button
+                          type="button"
+                          key={`theme-${preset.id}`}
+                          className={directMobileBg === preset.color ? 'direct-theme-swatch active' : 'direct-theme-swatch'}
+                          style={{ backgroundColor: preset.color }}
+                          title={preset.label}
+                          onClick={() => setDirectMobileBg(preset.color)}
+                        />
+                      ))}
+                    </div>
+                    <label className="direct-theme-custom">
+                      Personalizada
+                      <input
+                        type="color"
+                        value={directMobileBg}
+                        onChange={(event) => setDirectMobileBg(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
                 {loadingDirect && <div className="notice">Carregando conversas...</div>}
                 {!loadingDirect && (
                   <ul>
@@ -3063,7 +3354,10 @@ function App() {
                           <button
                             type="button"
                             className={active ? 'direct-thread-item active' : 'direct-thread-item'}
-                            onClick={() => openDirectThread(thread.id)}
+                            onClick={() => {
+                              setDirectThemeOpen(false)
+                              void openDirectThread(thread.id)
+                            }}
                           >
                             <div className="avatar">
                               {thread.participant.avatarUrl ? (
@@ -3085,22 +3379,56 @@ function App() {
                 )}
               </aside>
 
-              <div className="direct-chat">
+              <div
+                className={
+                  showDirectChatPane
+                    ? 'direct-chat direct-pane direct-pane-chat is-active'
+                    : 'direct-chat direct-pane direct-pane-chat is-inactive'
+                }
+              >
                 {loadingDirect ? (
                   <div className="notice">Sincronizando mensagens...</div>
                 ) : activeDirectThread ? (
                   <>
                     <header className="direct-chat-head">
-                      <div>
-                        <strong>{activeDirectThread.participant.name}</strong>
-                        <p>
-                          @{normalizeHandle(activeDirectThread.participant.handle)}{' '}
-                          {activeDirectThread.participant.online ? '• online' : '• offline'}
-                        </p>
+                      <div className="direct-chat-head-main">
+                        {isMobileViewport && (
+                          <button
+                            type="button"
+                            className="secondary-btn direct-mobile-back"
+                            onClick={() => setDirectMobileView('list')}
+                            aria-label="Voltar para conversas"
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path
+                                d="M15.5 4.5 8 12l7.5 7.5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        )}
+                        <div className="avatar direct-chat-avatar">
+                          {activeDirectThread.participant.avatarUrl ? (
+                            <img src={activeDirectThread.participant.avatarUrl} alt={activeDirectThread.participant.name} />
+                          ) : (
+                            initials(activeDirectThread.participant.name)
+                          )}
+                        </div>
+                        <div className="direct-chat-head-text">
+                          <strong>{activeDirectThread.participant.name}</strong>
+                          <p>
+                            @{normalizeHandle(activeDirectThread.participant.handle)}{' '}
+                            {activeDirectThread.participant.online ? '• online' : '• offline'}
+                          </p>
+                        </div>
                       </div>
                       <button
                         type="button"
-                        className="secondary-btn"
+                        className="secondary-btn direct-profile-btn"
                         onClick={() => openPublicProfile(activeDirectThread.participant.handle)}
                       >
                         Ver perfil
