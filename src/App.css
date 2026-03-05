@@ -3131,3 +3131,149 @@
     min-width: 4.2rem;
   }
 }
+
+.search-shell {
+  position: relative;
+}
+
+.search-user-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 20;
+  border-radius: 0.86rem;
+  border: 1px solid var(--ig-border, #dbdbdb);
+  background: #ffffff;
+  box-shadow: 0 16px 28px rgba(17, 17, 17, 0.14);
+  padding: 0.34rem;
+  display: grid;
+  gap: 0.24rem;
+  max-height: min(320px, 46vh);
+  overflow: auto;
+}
+
+.search-user-results p {
+  margin: 0;
+  padding: 0.48rem 0.56rem;
+  color: #666666;
+  font-size: 0.82rem;
+}
+
+.search-user-results button {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 0.72rem;
+  background: transparent;
+  text-align: left;
+  color: #111111;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.52rem;
+  align-items: center;
+  padding: 0.38rem 0.44rem;
+}
+
+.search-user-results button:hover {
+  border-color: #dcdcdc;
+  background: #f7f7f7;
+}
+
+.search-user-results strong {
+  display: block;
+  line-height: 1.12;
+}
+
+.search-user-results span {
+  display: block;
+  margin-top: 0.1rem;
+  color: #6b7280;
+  font-size: 0.76rem;
+}
+
+.spotify-card {
+  margin-top: 0.64rem;
+  border-radius: 0.88rem;
+  border: 1px solid var(--ig-border, #dbdbdb);
+  background: #ffffff;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.spotify-card iframe {
+  width: 100%;
+  min-height: 152px;
+  border: 0;
+  border-radius: 0.75rem;
+}
+
+.spotify-card a {
+  justify-self: start;
+  color: #0095f6;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.spotify-card a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root,
+  .scene-root {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .scene-root {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .main-column,
+  .main-column > * {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .top-strip {
+    top: calc(0.22rem + env(safe-area-inset-top));
+  }
+
+  .quick-actions {
+    display: none;
+  }
+
+  .search-user-results {
+    position: static;
+    margin-top: 0.42rem;
+    max-height: 38vh;
+    box-shadow: none;
+  }
+
+  .post-card {
+    padding: 0.72rem;
+  }
+
+  .post-user {
+    min-width: 0;
+  }
+
+  .post-user > div {
+    min-width: 0;
+  }
+
+  .post-user p {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .spotify-card iframe {
+    min-height: 132px;
+  }
+}

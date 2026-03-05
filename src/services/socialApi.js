@@ -52,8 +52,82 @@ function isMissingRelationError(error, relationName) {
   return relationName ? message.includes(`relation "${relationName}"`) : message.includes('relation')
 }
 
+function isMissingColumnError(error, columnName) {
+  if (!error) {
+    return false
+  }
+
+  if (error.code === '42703') {
+    return true
+  }
+
+  const message = String(error.message || '').toLowerCase()
+  return columnName ? message.includes(`column "${columnName}"`) : message.includes('column')
+}
+
 function followsSetupError() {
   return new Error('Tabela user_follows nao encontrada. Rode novamente supabase/schema.sql para ativar follows.')
+}
+
+const SPOTIFY_TYPES = new Set(['track', 'playlist', 'album', 'artist', 'episode', 'show'])
+
+function parseSpotifyData(rawUrl, rawType = '') {
+  const input = String(rawUrl || '').trim()
+  if (!input) {
+    return null
+  }
+
+  const value = input.startsWith('http://') || input.startsWith('https://') ? input : `https://${input}`
+
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+
+  const host = parsed.hostname.toLowerCase()
+  if (!host.includes('spotify.com')) {
+    return null
+  }
+
+  const segments = parsed.pathname.split('/').filter(Boolean)
+  let type = ''
+  let id = ''
+
+  if (segments[0] === 'intl' && segments.length >= 4) {
+    type = segments[2]
+    id = segments[3]
+  } else if (segments.length >= 2) {
+    type = segments[0]
+    id = segments[1]
+  }
+
+  if (!SPOTIFY_TYPES.has(type) || !id) {
+    const normalizedType = String(rawType || '').trim().toLowerCase()
+    if (!SPOTIFY_TYPES.has(normalizedType)) {
+      return null
+    }
+
+    const cleanId = id || segments.at(-1) || ''
+    if (!cleanId) {
+      return null
+    }
+
+    type = normalizedType
+    id = cleanId
+  }
+
+  const cleanId = id.split('?')[0]
+  const url = `https://open.spotify.com/${type}/${cleanId}`
+  const embedUrl = `https://open.spotify.com/embed/${type}/${cleanId}`
+
+  return {
+    type,
+    id: cleanId,
+    url,
+    embedUrl,
+  }
 }
 
 function directSetupError() {
@@ -85,6 +159,8 @@ const FEED_POST_SELECT = `
   mood,
   track_title,
   track_artist,
+  spotify_url,
+  spotify_type,
   media_url,
   media_type,
   likes_count,
@@ -130,6 +206,7 @@ function mapComment(row) {
 function mapPost(row, currentUserId) {
   const likes = row.post_likes || []
   const reposts = row.post_reposts || []
+  const spotify = parseSpotifyData(row.spotify_url, row.spotify_type)
 
   return {
     id: row.id,
@@ -144,6 +221,7 @@ function mapPost(row, currentUserId) {
     mood: row.mood || 'Sem mood',
     text: row.content,
     track: row.track_title && row.track_artist ? { title: row.track_title, artist: row.track_artist } : null,
+    spotify,
     media: row.media_url
       ? {
           url: row.media_url,
@@ -488,6 +566,38 @@ export async function fetchPeopleToFollow({ userId, limit = 6 }) {
     followers: followersCountMap.get(profileRow.id) || 0,
     followed: followingSet.has(profileRow.id),
   }))
+}
+
+export async function searchProfiles({ query, limit = 8, viewerUserId = '' }) {
+  const client = requireSupabase()
+  const normalized = String(query || '').trim()
+
+  if (!normalized) {
+    return []
+  }
+
+  const safeLimit = Math.max(1, Math.min(20, limit))
+  const { data, error } = await client
+    .from('profiles')
+    .select('id, name, handle, bio, avatar_url, created_at')
+    .or(`name.ilike.%${normalized}%,handle.ilike.%${normalizeHandle(normalized)}%`)
+    .order('created_at', { ascending: false })
+    .limit(safeLimit)
+
+  if (error) {
+    throw error
+  }
+
+  return (data || [])
+    .filter((row) => row.id !== viewerUserId)
+    .map((row) => ({
+      id: row.id,
+      name: safeProfileName(row),
+      handle: safeHandle(row),
+      bio: safeBio(row),
+      avatarUrl: safeAvatar(row),
+      createdAt: row.created_at,
+    }))
 }
 
 export async function toggleFollowUser({ followerId, followingId }) {
@@ -1172,14 +1282,29 @@ export async function createPost({
   mood,
   trackTitle,
   trackArtist,
+  spotifyUrl,
   mediaFile,
 }) {
   const client = requireSupabase()
   const media = await uploadMedia(userId, mediaFile, 'posts')
+  const spotify = parseSpotifyData(spotifyUrl)
 
-  const { data, error } = await client
-    .from('posts')
-    .insert({
+  const payload = {
+    user_id: userId,
+    content,
+    mood,
+    track_title: trackTitle || null,
+    track_artist: trackArtist || null,
+    media_url: media?.url || null,
+    media_type: media?.type || null,
+    spotify_url: spotify?.url || null,
+    spotify_type: spotify?.type || null,
+  }
+
+  let insertResult = await client.from('posts').insert(payload).select('id').single()
+
+  if (insertResult.error && (isMissingColumnError(insertResult.error, 'spotify_url') || isMissingColumnError(insertResult.error, 'spotify_type'))) {
+    const fallbackPayload = {
       user_id: userId,
       content,
       mood,
@@ -1187,9 +1312,12 @@ export async function createPost({
       track_artist: trackArtist || null,
       media_url: media?.url || null,
       media_type: media?.type || null,
-    })
-    .select('id')
-    .single()
+    }
+
+    insertResult = await client.from('posts').insert(fallbackPayload).select('id').single()
+  }
+
+  const { data, error } = insertResult
 
   if (error) {
     throw error

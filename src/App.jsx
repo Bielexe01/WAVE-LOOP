@@ -22,6 +22,7 @@ import {
   fetchFollowStats,
   fetchFeed,
   fetchPeopleToFollow,
+  searchProfiles,
   fetchPublicProfileByHandle,
   getSession,
   markStoryViewed,
@@ -76,6 +77,52 @@ function readFileAsDataUrl(file) {
 
     reader.readAsDataURL(file)
   })
+}
+
+const spotifyKinds = new Set(['track', 'playlist', 'album', 'artist', 'episode', 'show'])
+
+function parseSpotifyUrl(value) {
+  const raw = String(value || '').trim()
+  if (!raw) {
+    return null
+  }
+
+  const normalized = raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`
+  let url
+
+  try {
+    url = new URL(normalized)
+  } catch {
+    return null
+  }
+
+  if (!url.hostname.toLowerCase().includes('spotify.com')) {
+    return null
+  }
+
+  const segments = url.pathname.split('/').filter(Boolean)
+  let type = ''
+  let id = ''
+
+  if (segments[0] === 'intl' && segments.length >= 4) {
+    type = segments[2]
+    id = segments[3]
+  } else if (segments.length >= 2) {
+    type = segments[0]
+    id = segments[1]
+  }
+
+  if (!spotifyKinds.has(type) || !id) {
+    return null
+  }
+
+  const cleanId = id.split('?')[0]
+
+  return {
+    type,
+    url: `https://open.spotify.com/${type}/${cleanId}`,
+    embedUrl: `https://open.spotify.com/embed/${type}/${cleanId}`,
+  }
 }
 
 function postMatchesQuery(post, query) {
@@ -390,6 +437,7 @@ function App() {
   const [session, setSession] = useState(null)
   const [loadingAuth, setLoadingAuth] = useState(isSupabaseConfigured)
   const [loadingFeed, setLoadingFeed] = useState(false)
+  const [loadingUserSearch, setLoadingUserSearch] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [statusMessage, setStatusMessage] = useState(
     isSupabaseConfigured
@@ -448,6 +496,7 @@ function App() {
     text: '',
     track: '',
     artist: '',
+    spotifyUrl: '',
     mood: moods[0],
   })
   const [mediaFile, setMediaFile] = useState(null)
@@ -456,6 +505,7 @@ function App() {
   const [busyActions, setBusyActions] = useState({})
   const [playingPostId, setPlayingPostId] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [userSearchResults, setUserSearchResults] = useState([])
   const [likeBurstId, setLikeBurstId] = useState('')
 
   const fileInputRef = useRef(null)
@@ -498,6 +548,49 @@ function App() {
 
     return posts.filter((post) => postMatchesQuery(post, query))
   }, [posts, searchQuery])
+
+  const localUserSearchPool = useMemo(() => {
+    const pool = []
+
+    if (currentUser) {
+      pool.push({
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+        bio: currentUser.bio || '',
+        avatarUrl: currentUser.avatarUrl || null,
+      })
+    }
+
+    for (const person of peopleToFollow) {
+      pool.push({
+        id: person.id,
+        name: person.name,
+        handle: normalizeHandle(person.handle),
+        bio: person.role || '',
+        avatarUrl: person.avatarUrl || null,
+      })
+    }
+
+    for (const post of posts) {
+      pool.push({
+        id: post.user.id,
+        name: post.user.name,
+        handle: normalizeHandle(post.user.handle),
+        bio: post.user.bio || '',
+        avatarUrl: post.user.avatarUrl || null,
+      })
+    }
+
+    const seen = new Set()
+    return pool.filter((item) => {
+      if (!item.id || seen.has(item.id)) {
+        return false
+      }
+      seen.add(item.id)
+      return true
+    })
+  }, [currentUser, peopleToFollow, posts])
 
   const activeDirectThread = useMemo(() => {
     return (
@@ -1489,6 +1582,69 @@ function App() {
     }
   }, [activeStoryItem, goToNextStory, storyViewer.open])
 
+  useEffect(() => {
+    const query = searchQuery.trim()
+
+    if (query.length < 2) {
+      setUserSearchResults([])
+      setLoadingUserSearch(false)
+      return
+    }
+
+    let cancelled = false
+    setLoadingUserSearch(true)
+
+    const load = async () => {
+      if (isSupabaseConfigured && currentUser?.id) {
+        try {
+          const results = await searchProfiles({
+            query,
+            limit: 8,
+            viewerUserId: currentUser.id,
+          })
+
+          if (!cancelled) {
+            setUserSearchResults(results)
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setErrorMessage(toMessage(error, 'Falha ao buscar usuarios.'))
+            setUserSearchResults([])
+          }
+        } finally {
+          if (!cancelled) {
+            setLoadingUserSearch(false)
+          }
+        }
+
+        return
+      }
+
+      const normalizedQuery = query.toLowerCase()
+      const results = localUserSearchPool
+        .filter((user) => {
+          const name = String(user.name || '').toLowerCase()
+          const handle = String(normalizeHandle(user.handle || '')).toLowerCase()
+          return name.includes(normalizedQuery) || handle.includes(normalizedQuery)
+        })
+        .slice(0, 8)
+
+      if (!cancelled) {
+        setUserSearchResults(results)
+        setLoadingUserSearch(false)
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      void load()
+    }, 240)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [currentUser, localUserSearchPool, searchQuery])
+
   const setActionBusy = useCallback((actionId, value) => {
     setBusyActions((current) => ({ ...current, [actionId]: value }))
   }, [])
@@ -1587,13 +1743,20 @@ function App() {
     const text = composer.text.trim()
     const trackTitle = composer.track.trim()
     const trackArtist = composer.artist.trim()
+    const spotifyInput = composer.spotifyUrl.trim()
+    const spotify = spotifyInput ? parseSpotifyUrl(spotifyInput) : null
 
     if ((trackTitle && !trackArtist) || (!trackTitle && trackArtist)) {
       setErrorMessage('Preencha nome da faixa e artista juntos.')
       return
     }
 
-    if (!text && !trackTitle && !trackArtist && !mediaFile) {
+    if (spotifyInput && !spotify) {
+      setErrorMessage('Link do Spotify invalido. Use URL de faixa, playlist, album ou artista.')
+      return
+    }
+
+    if (!text && !trackTitle && !trackArtist && !mediaFile && !spotify) {
       setErrorMessage('Escreva algo, informe uma faixa ou adicione midia.')
       return
     }
@@ -1614,6 +1777,7 @@ function App() {
           mood: composer.mood,
           trackTitle,
           trackArtist,
+          spotifyUrl: spotify?.url || '',
           mediaFile,
         })
 
@@ -1640,6 +1804,7 @@ function App() {
           mood: composer.mood,
           text: text || 'Novo drop sem legenda ainda.',
           track: trackTitle && trackArtist ? { title: trackTitle, artist: trackArtist } : null,
+          spotify,
           media: localMedia,
           likes: 0,
           reposts: 0,
@@ -1651,7 +1816,7 @@ function App() {
         setPosts((current) => [post, ...current])
       }
 
-      setComposer({ text: '', track: '', artist: '', mood: moods[0] })
+      setComposer({ text: '', track: '', artist: '', spotifyUrl: '', mood: moods[0] })
       clearComposerMedia()
       setStatusMessage('Post publicado com sucesso.')
     } catch (error) {
@@ -2345,14 +2510,40 @@ function App() {
           {activeNav !== 'Direct' && (
           <section className="top-strip appear-up" onMouseMove={handleInteractiveMove} onMouseLeave={clearInteractiveMove}>
             <div className="search-shell">
-              <label htmlFor="global-search">Buscar no feed</label>
+              <label htmlFor="global-search">Buscar posts e usuarios</label>
               <input
                 id="global-search"
                 type="search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Artistas, moods, faixas e textos..."
+                placeholder="Nome, @handle, faixa, mood..."
               />
+              {searchQuery.trim().length >= 2 && (
+                <div className="search-user-results">
+                  {loadingUserSearch && <p>Buscando usuarios...</p>}
+                  {!loadingUserSearch && userSearchResults.length === 0 && <p>Nenhum usuario encontrado.</p>}
+                  {!loadingUserSearch &&
+                    userSearchResults.length > 0 &&
+                    userSearchResults.map((user) => (
+                      <button
+                        type="button"
+                        key={`search-user-${user.id}`}
+                        onClick={() => {
+                          setSearchQuery('')
+                          void openPublicProfile(user.handle)
+                        }}
+                      >
+                        <div className="avatar">
+                          {user.avatarUrl ? <img src={user.avatarUrl} alt={user.name} /> : initials(user.name)}
+                        </div>
+                        <div>
+                          <strong>{user.name}</strong>
+                          <span>@{normalizeHandle(user.handle)}</span>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
             <div className="quick-actions" aria-label="Atalhos rapidos">
               <button type="button" onClick={() => activateNav('Feed')}>
@@ -2827,6 +3018,13 @@ function App() {
               </button>
             </div>
 
+            <input
+              value={composer.spotifyUrl}
+              onChange={(event) => handleComposer('spotifyUrl', event.target.value)}
+              type="url"
+              placeholder="Link do Spotify (track/playlist/album/artista)"
+            />
+
             <div className="media-input-row">
               <label className="file-pill" htmlFor="composer-file">
                 <span>{mediaFile ? 'Trocar imagem/audio' : 'Adicionar imagem/audio'}</span>
@@ -2929,6 +3127,20 @@ function App() {
                     >
                       {playingPostId === post.id ? 'Pausar visual' : 'Tocar visual'}
                     </button>
+                  </div>
+                )}
+
+                {post.spotify && (
+                  <div className="spotify-card">
+                    <iframe
+                      src={post.spotify.embedUrl}
+                      title={`Spotify ${post.spotify.type} ${post.id}`}
+                      loading="lazy"
+                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                    />
+                    <a href={post.spotify.url} target="_blank" rel="noreferrer">
+                      Abrir no Spotify
+                    </a>
                   </div>
                 )}
 

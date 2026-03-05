@@ -16,12 +16,31 @@ create table if not exists public.posts (
   mood text not null default 'Alta energia',
   track_title text,
   track_artist text,
+  spotify_url text,
+  spotify_type text,
   media_url text,
   media_type text check (media_type in ('image', 'audio')),
   likes_count integer not null default 0,
   reposts_count integer not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table public.posts add column if not exists spotify_url text;
+alter table public.posts add column if not exists spotify_type text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'posts_spotify_type_check'
+      and conrelid = 'public.posts'::regclass
+  ) then
+    alter table public.posts
+    add constraint posts_spotify_type_check
+    check (spotify_type is null or spotify_type in ('track', 'playlist', 'album', 'artist', 'episode', 'show'));
+  end if;
+end $$;
 
 create table if not exists public.comments (
   id uuid primary key default gen_random_uuid(),
@@ -105,6 +124,7 @@ create table if not exists public.story_views (
 
 create index if not exists idx_posts_created_at on public.posts(created_at desc);
 create index if not exists idx_posts_user_id on public.posts(user_id);
+create index if not exists idx_posts_spotify_type on public.posts(spotify_type);
 create index if not exists idx_comments_post_id on public.comments(post_id);
 create index if not exists idx_comments_created_at on public.comments(created_at desc);
 create index if not exists idx_user_follows_follower on public.user_follows(follower_id);
