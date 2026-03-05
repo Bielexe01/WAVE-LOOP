@@ -77,8 +77,18 @@ function parseSpotifyData(rawUrl, rawType = '') {
     return null
   }
 
-  const value = input.startsWith('http://') || input.startsWith('https://') ? input : `https://${input}`
+  const uriMatch = input.match(/spotify:(track|playlist|album|artist|episode|show):([A-Za-z0-9]+)/i)
+  if (uriMatch) {
+    const [, type, id] = uriMatch
+    return {
+      type: type.toLowerCase(),
+      id,
+      url: `https://open.spotify.com/${type.toLowerCase()}/${id}`,
+      embedUrl: `https://open.spotify.com/embed/${type.toLowerCase()}/${id}`,
+    }
+  }
 
+  const value = input.startsWith('http://') || input.startsWith('https://') ? input : `https://${input}`
   let parsed
   try {
     parsed = new URL(value)
@@ -87,46 +97,44 @@ function parseSpotifyData(rawUrl, rawType = '') {
   }
 
   const host = parsed.hostname.toLowerCase()
-  if (!host.includes('spotify.com')) {
+  const isSpotifyHost = host.includes('spotify.com') || host.includes('spotify.link')
+  if (!isSpotifyHost) {
     return null
   }
 
-  const segments = parsed.pathname.split('/').filter(Boolean)
-  let type = ''
-  let id = ''
+  const path = parsed.pathname || ''
+  const pathMatch = path.match(/(?:^|\/)(track|playlist|album|artist|episode|show)\/([A-Za-z0-9]+)(?:$|\/|\?)/i)
+  let type = pathMatch?.[1]?.toLowerCase() || ''
+  let id = pathMatch?.[2] || ''
 
-  if (segments[0] === 'intl' && segments.length >= 4) {
-    type = segments[2]
-    id = segments[3]
-  } else if (segments.length >= 2) {
-    type = segments[0]
-    id = segments[1]
-  }
-
-  if (!SPOTIFY_TYPES.has(type) || !id) {
+  if (!type || !id) {
     const normalizedType = String(rawType || '').trim().toLowerCase()
     if (!SPOTIFY_TYPES.has(normalizedType)) {
-      return null
-    }
-
-    const cleanId = id || segments.at(-1) || ''
-    if (!cleanId) {
-      return null
+      return {
+        type: normalizedType || null,
+        id: null,
+        url: value,
+        embedUrl: null,
+      }
     }
 
     type = normalizedType
-    id = cleanId
   }
 
-  const cleanId = id.split('?')[0]
-  const url = `https://open.spotify.com/${type}/${cleanId}`
-  const embedUrl = `https://open.spotify.com/embed/${type}/${cleanId}`
+  if (type && id) {
+    return {
+      type,
+      id,
+      url: `https://open.spotify.com/${type}/${id}`,
+      embedUrl: `https://open.spotify.com/embed/${type}/${id}`,
+    }
+  }
 
   return {
-    type,
-    id: cleanId,
-    url,
-    embedUrl,
+    type: type || null,
+    id: null,
+    url: value,
+    embedUrl: null,
   }
 }
 

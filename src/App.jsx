@@ -87,6 +87,16 @@ function parseSpotifyUrl(value) {
     return null
   }
 
+  const uriMatch = raw.match(/spotify:(track|playlist|album|artist|episode|show):([A-Za-z0-9]+)/i)
+  if (uriMatch) {
+    const [, type, id] = uriMatch
+    return {
+      type: type.toLowerCase(),
+      url: `https://open.spotify.com/${type.toLowerCase()}/${id}`,
+      embedUrl: `https://open.spotify.com/embed/${type.toLowerCase()}/${id}`,
+    }
+  }
+
   const normalized = raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`
   let url
 
@@ -96,32 +106,34 @@ function parseSpotifyUrl(value) {
     return null
   }
 
-  if (!url.hostname.toLowerCase().includes('spotify.com')) {
+  const host = url.hostname.toLowerCase()
+  if (!host.includes('spotify.com') && !host.includes('spotify.link')) {
     return null
   }
 
-  const segments = url.pathname.split('/').filter(Boolean)
-  let type = ''
-  let id = ''
-
-  if (segments[0] === 'intl' && segments.length >= 4) {
-    type = segments[2]
-    id = segments[3]
-  } else if (segments.length >= 2) {
-    type = segments[0]
-    id = segments[1]
+  const pathMatch = url.pathname.match(/(?:^|\/)(track|playlist|album|artist|episode|show)\/([A-Za-z0-9]+)(?:$|\/|\?)/i)
+  if (!pathMatch) {
+    return {
+      type: 'link',
+      url: normalized,
+      embedUrl: '',
+    }
   }
 
-  if (!spotifyKinds.has(type) || !id) {
-    return null
+  const [, type, id] = pathMatch
+  const normalizedType = String(type || '').toLowerCase()
+  if (!spotifyKinds.has(normalizedType)) {
+    return {
+      type: 'link',
+      url: normalized,
+      embedUrl: '',
+    }
   }
-
-  const cleanId = id.split('?')[0]
 
   return {
-    type,
-    url: `https://open.spotify.com/${type}/${cleanId}`,
-    embedUrl: `https://open.spotify.com/embed/${type}/${cleanId}`,
+    type: normalizedType,
+    url: `https://open.spotify.com/${normalizedType}/${id}`,
+    embedUrl: `https://open.spotify.com/embed/${normalizedType}/${id}`,
   }
 }
 
@@ -3133,7 +3145,9 @@ function App() {
               </button>
               {selectedSpotify && (
                 <>
-                  <span className="spotify-selected-kind">{selectedSpotify.type}</span>
+                  <span className="spotify-selected-kind">
+                    {selectedSpotify.type === 'link' ? 'link' : selectedSpotify.type}
+                  </span>
                   <button
                     type="button"
                     className="secondary-btn"
@@ -3150,12 +3164,19 @@ function App() {
 
             {selectedSpotify && (
               <div className="spotify-card composer-spotify-preview">
-                <iframe
-                  src={selectedSpotify.embedUrl}
-                  title={`Spotify selecionado ${selectedSpotify.type}`}
-                  loading="lazy"
-                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                />
+                {selectedSpotify.embedUrl ? (
+                  <iframe
+                    src={selectedSpotify.embedUrl}
+                    title={`Spotify selecionado ${selectedSpotify.type}`}
+                    loading="lazy"
+                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                  />
+                ) : (
+                  <p>Link do Spotify selecionado. O embed sera exibido quando o formato for suportado.</p>
+                )}
+                <a href={selectedSpotify.url} target="_blank" rel="noreferrer">
+                  Abrir no Spotify
+                </a>
               </div>
             )}
 
@@ -3266,12 +3287,16 @@ function App() {
 
                 {post.spotify && (
                   <div className="spotify-card">
-                    <iframe
-                      src={post.spotify.embedUrl}
-                      title={`Spotify ${post.spotify.type} ${post.id}`}
-                      loading="lazy"
-                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                    />
+                    {post.spotify.embedUrl ? (
+                      <iframe
+                        src={post.spotify.embedUrl}
+                        title={`Spotify ${post.spotify.type} ${post.id}`}
+                        loading="lazy"
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                      />
+                    ) : (
+                      <p>Esse link nao gera embed direto, mas abre normalmente no Spotify.</p>
+                    )}
                     <a href={post.spotify.url} target="_blank" rel="noreferrer">
                       Abrir no Spotify
                     </a>
