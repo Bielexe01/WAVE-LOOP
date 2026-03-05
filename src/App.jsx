@@ -1339,7 +1339,7 @@ function App() {
   )
 
   const loadSpotifyCapsule = useCallback(
-    async (userId, period = spotifyCapsulePeriod) => {
+    async (userId, period = '4_weeks') => {
       if (!userId) {
         setSpotifyCapsuleConnection(null)
         setSpotifyCapsuleMine(null)
@@ -1348,14 +1348,14 @@ function App() {
       }
 
       if (!isSupabaseConfigured) {
-        const localBoard = buildLocalSpotifyCapsuleLeaderboard(currentUser)
+        const localBoard = buildLocalSpotifyCapsuleLeaderboard(demoUser)
           .filter((entry) => entry.period === period)
           .sort((a, b) => b.score - a.score)
         setSpotifyCapsuleConnection({
           userId,
           spotifyUserId: 'demo-user',
-          displayName: currentUser?.name || 'Demo User',
-          avatarUrl: currentUser?.avatarUrl || null,
+          displayName: demoUser.name || 'Demo User',
+          avatarUrl: demoUser.avatarUrl || null,
           country: 'BR',
           product: 'premium',
           connectedAt: new Date().toISOString(),
@@ -1384,7 +1384,7 @@ function App() {
         setLoadingSpotifyCapsule(false)
       }
     },
-    [currentUser, spotifyCapsulePeriod],
+    [],
   )
 
   const syncSpotifyCapsule = useCallback(
@@ -1617,7 +1617,7 @@ function App() {
           loadPeopleToFollow(nextSession.user.id),
           loadCommunities(nextSession.user.id),
           loadPlaylists(nextSession.user.id),
-          loadSpotifyCapsule(nextSession.user.id, spotifyCapsulePeriod),
+          loadSpotifyCapsule(nextSession.user.id, '4_weeks'),
           loadStories(nextSession.user.id),
           loadDirectInbox(nextSession.user.id),
         ])
@@ -1655,7 +1655,7 @@ function App() {
       isMounted = false
       unsubscribe()
     }
-  }, [loadCommunities, loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadPlaylists, loadSpotifyCapsule, loadStories, spotifyCapsulePeriod])
+  }, [loadCommunities, loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadPlaylists, loadSpotifyCapsule, loadStories])
 
   useEffect(() => {
     if (activeDirectThread) {
