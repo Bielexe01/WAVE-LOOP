@@ -504,6 +504,170 @@ function buildLocalPlaylistCards() {
   }))
 }
 
+const communityGenreOptions = ['Rock', 'Gospel', 'Trap', 'Lo-fi', 'Musica eletronica', 'Musica crista']
+
+const communityPostTypeOptions = [
+  { id: 'music', label: 'Compartilhar musica' },
+  { id: 'playlist', label: 'Recomendar playlist' },
+  { id: 'album_opinion', label: 'Opiniao de album' },
+  { id: 'show_clip', label: 'Trecho de show' },
+  { id: 'studio_photo', label: 'Foto de estudio' },
+  { id: 'rating', label: 'Avaliacao de musica' },
+]
+
+function seededIndex(seed, size) {
+  const value = String(seed || '')
+    .split('')
+    .reduce((acc, char) => acc + char.charCodeAt(0), 0)
+
+  return size > 0 ? value % size : 0
+}
+
+function detectCommunityGenre(community) {
+  const name = String(community?.name || '').toLowerCase()
+  const description = String(community?.description || '').toLowerCase()
+  const text = `${name} ${description}`
+
+  if (text.includes('rock') || text.includes('guitarra') || text.includes('metal')) {
+    return 'Rock'
+  }
+
+  if (text.includes('gospel') || text.includes('louvor') || text.includes('crista')) {
+    return 'Gospel'
+  }
+
+  if (text.includes('trap') || text.includes('808') || text.includes('drill')) {
+    return 'Trap'
+  }
+
+  if (text.includes('lofi') || text.includes('lo-fi') || text.includes('chill')) {
+    return 'Lo-fi'
+  }
+
+  if (text.includes('eletronica') || text.includes('edm') || text.includes('house') || text.includes('techno')) {
+    return 'Musica eletronica'
+  }
+
+  if (text.includes('adora') || text.includes('igreja')) {
+    return 'Musica crista'
+  }
+
+  return communityGenreOptions[seededIndex(community?.id || community?.name, communityGenreOptions.length)]
+}
+
+function buildCommunityFeedSeed(community, currentUser) {
+  const genre = detectCommunityGenre(community)
+  const authorName = community?.creatorName || 'Moderador'
+  const authorHandle = normalizeHandle(community?.creatorHandle || 'moderador')
+
+  return [
+    {
+      id: `seed-feed-${community.id}-music`,
+      type: 'music',
+      title: `Drop da semana (${genre})`,
+      text: 'Compartilha aqui a faixa que voce mais ouviu hoje.',
+      spotifyUrl: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
+      mediaUrl: '',
+      albumName: '',
+      rating: 0,
+      author: { id: community?.creatorId || 'seed-author', name: authorName, handle: authorHandle },
+      createdAt: new Date().toISOString(),
+      likes: 6,
+      shares: 2,
+      saves: 3,
+      liked: false,
+      saved: false,
+      comments: [
+        {
+          id: `seed-comment-${community.id}-1`,
+          text: 'Esse som ficou absurdo.',
+          createdAt: new Date().toISOString(),
+          author: { id: 'seed-user-a', name: 'Luna', handle: 'lunacosta' },
+        },
+      ],
+    },
+    {
+      id: `seed-feed-${community.id}-playlist`,
+      type: 'playlist',
+      title: `${genre} essentials`,
+      text: 'Playlist colaborativa da comunidade.',
+      spotifyUrl: 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
+      mediaUrl: '',
+      albumName: '',
+      rating: 0,
+      author: {
+        id: currentUser?.id || 'seed-user',
+        name: currentUser?.name || 'Voce',
+        handle: normalizeHandle(currentUser?.handle || 'voce'),
+      },
+      createdAt: new Date(Date.now() - 1000 * 60 * 36).toISOString(),
+      likes: 3,
+      shares: 1,
+      saves: 2,
+      liked: false,
+      saved: false,
+      comments: [],
+    },
+  ]
+}
+
+function buildCommunityTopicsSeed(community) {
+  return [
+    {
+      id: `seed-topic-${community.id}-1`,
+      title: 'Melhores solos de guitarra',
+      body: 'Poste seu solo favorito com contexto.',
+      pinned: true,
+      createdAt: new Date().toISOString(),
+      author: { id: community?.creatorId || 'seed-author', name: community?.creatorName || 'Moderador', handle: normalizeHandle(community?.creatorHandle || 'moderador') },
+      replies: [
+        {
+          id: `seed-reply-${community.id}-1`,
+          text: 'Comfortably Numb ao vivo sempre vence.',
+          votes: 5,
+          isBest: false,
+          author: { id: 'seed-user-1', name: 'Nina', handle: 'demo_ninaprado' },
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      bestReplyId: '',
+    },
+  ]
+}
+
+function buildCommunityCollabSeed(community) {
+  return [
+    {
+      id: `seed-collab-${community.id}-1`,
+      title: 'Procuro vocal para refrão',
+      roleNeeded: 'Vocal',
+      details: 'Faixa em 95bpm, vibe pop rock.',
+      createdAt: new Date().toISOString(),
+      status: 'open',
+      applicants: 2,
+      author: { id: community?.creatorId || 'seed-author', name: community?.creatorName || 'Moderador', handle: normalizeHandle(community?.creatorHandle || 'moderador') },
+    },
+  ]
+}
+
+function buildCommunityChallengesSeed(community) {
+  return [
+    {
+      id: `seed-challenge-${community.id}-1`,
+      title: 'Desafio cover da semana',
+      kind: 'cover',
+      details: 'Cover livre de 45s.',
+      deadline: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
+      participants: [
+        { userId: 'seed-user-1', name: 'Nina', score: 82 },
+        { userId: 'seed-user-2', name: 'Vitor', score: 74 },
+      ],
+      createdAt: new Date().toISOString(),
+      author: { id: community?.creatorId || 'seed-author', name: community?.creatorName || 'Moderador', handle: normalizeHandle(community?.creatorHandle || 'moderador') },
+    },
+  ]
+}
+
 const spotifyPickerLibrary = [
   {
     id: 'sp-track-1',
@@ -627,7 +791,12 @@ async function fetchSpotifyRecentHistory(accessToken, period) {
   }
 
   const periodStart = capsulePeriodStartTimestamp(period)
-  const maxPages = period === 'all_time' ? 12 : 8
+  const maxPagesByPeriod = {
+    '4_weeks': 84, // ate 4.200 plays
+    '6_months': 320, // ate 16.000 plays
+    all_time: 420, // limite tecnico (recently-played nao e historico completo)
+  }
+  const maxPages = maxPagesByPeriod[period] || 84
   let beforeCursor = ''
   const allItems = []
 
@@ -656,12 +825,12 @@ async function fetchSpotifyRecentHistory(accessToken, period) {
       break
     }
 
-    const nextBefore = Number(data?.cursors?.before || 0)
-    if (!Number.isFinite(nextBefore) || nextBefore <= 0) {
+    const nextBefore = data?.cursors?.before ? String(data.cursors.before) : ''
+    if (!nextBefore) {
       break
     }
 
-    beforeCursor = String(Math.floor(nextBefore - 1))
+    beforeCursor = nextBefore
   }
 
   const periodFiltered = periodStart
@@ -1005,6 +1174,34 @@ function App() {
   const [communityRankPeriod, setCommunityRankPeriod] = useState('4_weeks')
   const [communityRankingsById, setCommunityRankingsById] = useState({})
   const [loadingCommunityRankings, setLoadingCommunityRankings] = useState(false)
+  const [communityQuery, setCommunityQuery] = useState('')
+  const [communityFilter, setCommunityFilter] = useState('all')
+  const [communityGenreFilter, setCommunityGenreFilter] = useState('all')
+  const [communityWorkspaceTab, setCommunityWorkspaceTab] = useState('feed')
+  const [selectedCommunityId, setSelectedCommunityId] = useState('')
+  const [communityFeedById, setCommunityFeedById] = useState({})
+  const [communityPostDraft, setCommunityPostDraft] = useState({
+    type: 'music',
+    title: '',
+    text: '',
+    spotifyUrl: '',
+    mediaUrl: '',
+    albumName: '',
+    rating: 4,
+  })
+  const [communityCommentDrafts, setCommunityCommentDrafts] = useState({})
+  const [communityTopicsById, setCommunityTopicsById] = useState({})
+  const [communityTopicDraft, setCommunityTopicDraft] = useState({ title: '', body: '' })
+  const [communityReplyDrafts, setCommunityReplyDrafts] = useState({})
+  const [communityCollabsById, setCommunityCollabsById] = useState({})
+  const [communityCollabDraft, setCommunityCollabDraft] = useState({ title: '', roleNeeded: '', details: '' })
+  const [communityChallengesById, setCommunityChallengesById] = useState({})
+  const [communityChallengeDraft, setCommunityChallengeDraft] = useState({
+    title: '',
+    kind: 'cover',
+    details: '',
+    deadline: '',
+  })
   const [communityDraft, setCommunityDraft] = useState({
     name: '',
     description: '',
@@ -1296,6 +1493,99 @@ function App() {
   const ownProfileTrackPosts = useMemo(() => {
     return ownProfilePosts.filter((post) => post.track)
   }, [ownProfilePosts])
+
+  const communityStats = useMemo(() => {
+    const total = communities.length
+    const joined = communities.filter((community) => community.joined).length
+    const mine = currentUser ? communities.filter((community) => community.creatorId === currentUser.id).length : 0
+
+    return { total, joined, mine }
+  }, [communities, currentUser])
+
+  const filteredCommunities = useMemo(() => {
+    const query = communityQuery.trim().toLowerCase()
+
+    return communities.filter((community) => {
+      const communityGenre = detectCommunityGenre(community)
+
+      if (communityFilter === 'joined' && !community.joined) {
+        return false
+      }
+
+      if (communityFilter === 'mine' && (!currentUser || community.creatorId !== currentUser.id)) {
+        return false
+      }
+
+      if (communityGenreFilter !== 'all' && communityGenre !== communityGenreFilter) {
+        return false
+      }
+
+      if (!query) {
+        return true
+      }
+
+      const haystack = [
+        community.name,
+        community.description,
+        community.creatorName,
+        community.creatorHandle,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+
+      return haystack.includes(query)
+    })
+  }, [communities, communityFilter, communityGenreFilter, communityQuery, currentUser])
+
+  const selectedCommunity = useMemo(() => {
+    if (!selectedCommunityId) {
+      return filteredCommunities[0] || null
+    }
+
+    return filteredCommunities.find((community) => community.id === selectedCommunityId) || filteredCommunities[0] || null
+  }, [filteredCommunities, selectedCommunityId])
+
+  const selectedCommunityGenre = useMemo(() => {
+    return selectedCommunity ? detectCommunityGenre(selectedCommunity) : ''
+  }, [selectedCommunity])
+
+  const activeCommunityFeed = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return [...(communityFeedById[selectedCommunity.id] || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  }, [communityFeedById, selectedCommunity])
+
+  const activeCommunityTopics = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return [...(communityTopicsById[selectedCommunity.id] || [])].sort((a, b) => {
+      if (a.pinned !== b.pinned) {
+        return a.pinned ? -1 : 1
+      }
+      return new Date(b.createdAt) - new Date(a.createdAt)
+    })
+  }, [communityTopicsById, selectedCommunity])
+
+  const activeCommunityCollabs = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return [...(communityCollabsById[selectedCommunity.id] || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  }, [communityCollabsById, selectedCommunity])
+
+  const activeCommunityChallenges = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return [...(communityChallengesById[selectedCommunity.id] || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  }, [communityChallengesById, selectedCommunity])
 
   const engagement = useMemo(() => {
     return posts.reduce(
@@ -1779,6 +2069,29 @@ function App() {
         setCommunities(buildLocalCommunityCards())
         setCommunityRankingsById({})
         setLoadingCommunityRankings(false)
+        setCommunityQuery('')
+        setCommunityFilter('all')
+        setCommunityGenreFilter('all')
+        setCommunityWorkspaceTab('feed')
+        setSelectedCommunityId('')
+        setCommunityFeedById({})
+        setCommunityCommentDrafts({})
+        setCommunityPostDraft({
+          type: 'music',
+          title: '',
+          text: '',
+          spotifyUrl: '',
+          mediaUrl: '',
+          albumName: '',
+          rating: 4,
+        })
+        setCommunityTopicsById({})
+        setCommunityTopicDraft({ title: '', body: '' })
+        setCommunityReplyDrafts({})
+        setCommunityCollabsById({})
+        setCommunityCollabDraft({ title: '', roleNeeded: '', details: '' })
+        setCommunityChallengesById({})
+        setCommunityChallengeDraft({ title: '', kind: 'cover', details: '', deadline: '' })
         setPlaylists(buildLocalPlaylistCards())
         setSpotifyCapsuleConnection(null)
         setSpotifyCapsuleMine(null)
@@ -1871,6 +2184,81 @@ function App() {
 
     void loadCommunityRankings(currentUser.id, { period: communityRankPeriod })
   }, [communities, communityRankPeriod, currentUser?.id, loadCommunityRankings])
+
+  useEffect(() => {
+    if (filteredCommunities.length === 0) {
+      if (selectedCommunityId) {
+        setSelectedCommunityId('')
+      }
+      return
+    }
+
+    if (!selectedCommunityId || !filteredCommunities.some((community) => community.id === selectedCommunityId)) {
+      setSelectedCommunityId(filteredCommunities[0].id)
+    }
+  }, [filteredCommunities, selectedCommunityId])
+
+  useEffect(() => {
+    if (!communities.length) {
+      setCommunityFeedById({})
+      setCommunityTopicsById({})
+      setCommunityCollabsById({})
+      setCommunityChallengesById({})
+      return
+    }
+
+    setCommunityFeedById((current) => {
+      const next = { ...current }
+      let changed = false
+      for (const community of communities) {
+        if (!next[community.id]) {
+          next[community.id] = buildCommunityFeedSeed(community, currentUser)
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+
+    setCommunityTopicsById((current) => {
+      const next = { ...current }
+      let changed = false
+      for (const community of communities) {
+        if (!next[community.id]) {
+          next[community.id] = buildCommunityTopicsSeed(community)
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+
+    setCommunityCollabsById((current) => {
+      const next = { ...current }
+      let changed = false
+      for (const community of communities) {
+        if (!next[community.id]) {
+          next[community.id] = buildCommunityCollabSeed(community)
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+
+    setCommunityChallengesById((current) => {
+      const next = { ...current }
+      let changed = false
+      for (const community of communities) {
+        if (!next[community.id]) {
+          next[community.id] = buildCommunityChallengesSeed(community)
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+  }, [communities, currentUser])
 
   useEffect(() => {
     if (!isSupabaseConfigured || !currentUser?.id || typeof window === 'undefined') {
@@ -3593,10 +3981,26 @@ function App() {
     await syncSpotifyCapsule(currentUser.id, { period: spotifyCapsulePeriod })
   }
 
-  const toggleCommunityJoin = async (communityId) => {
+  const toggleCommunityJoin = async (communityId, options = {}) => {
     if (!currentUser?.id || !communityId) {
       setErrorMessage('Entre na sua conta para participar de comunidades.')
       return
+    }
+
+    const targetCommunity = communities.find((community) => community.id === communityId)
+    const joinedBefore = Boolean(targetCommunity?.joined)
+    const isOwner = targetCommunity?.creatorId === currentUser.id
+
+    if (joinedBefore && isOwner) {
+      setErrorMessage('Voce e criador desta comunidade. Para sair, transfira a criacao para outro perfil.')
+      return
+    }
+
+    if (joinedBefore && options.confirmLeave && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Deseja realmente sair desta comunidade?')
+      if (!confirmed) {
+        return
+      }
     }
 
     if (!isSupabaseConfigured) {
@@ -3611,6 +4015,11 @@ function App() {
             : community,
         ),
       )
+      if (joinedBefore) {
+        setStatusMessage('Voce saiu da comunidade.')
+      } else {
+        setStatusMessage('Agora voce participa da comunidade.')
+      }
       return
     }
 
@@ -3631,6 +4040,17 @@ function App() {
             : community,
         ),
       )
+
+      if (joinedBefore && result.joined) {
+        setErrorMessage('Nao foi possivel sair desta comunidade agora.')
+        return
+      }
+
+      if (result.joined) {
+        setStatusMessage('Agora voce participa da comunidade.')
+      } else {
+        setStatusMessage('Voce saiu da comunidade.')
+      }
     } catch (error) {
       setErrorMessage(toMessage(error, 'Nao foi possivel atualizar sua comunidade agora.'))
     }
@@ -3734,6 +4154,473 @@ function App() {
     } finally {
       setCreatingCommunity(false)
     }
+  }
+
+  const publishCommunityPost = (event) => {
+    event.preventDefault()
+
+    if (!currentUser?.id || !selectedCommunity?.id) {
+      setErrorMessage('Selecione uma comunidade e faca login para publicar.')
+      return
+    }
+
+    const title = communityPostDraft.title.trim()
+    const text = communityPostDraft.text.trim()
+    const spotifyUrl = communityPostDraft.spotifyUrl.trim()
+    const mediaUrl = communityPostDraft.mediaUrl.trim()
+    const albumName = communityPostDraft.albumName.trim()
+    const rating = Math.max(1, Math.min(5, Number(communityPostDraft.rating || 4)))
+
+    if (!title && !text && !spotifyUrl && !mediaUrl) {
+      setErrorMessage('Preencha titulo, texto ou link para publicar no feed da comunidade.')
+      return
+    }
+
+    const nextPost = {
+      id: `community-post-${selectedCommunity.id}-${Date.now()}`,
+      type: communityPostDraft.type || 'music',
+      title,
+      text,
+      spotifyUrl,
+      mediaUrl,
+      albumName,
+      rating: communityPostDraft.type === 'rating' ? rating : 0,
+      author: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+      },
+      createdAt: new Date().toISOString(),
+      likes: 0,
+      shares: 0,
+      saves: 0,
+      liked: false,
+      saved: false,
+      comments: [],
+    }
+
+    setCommunityFeedById((current) => ({
+      ...current,
+      [selectedCommunity.id]: [nextPost, ...(current[selectedCommunity.id] || [])],
+    }))
+
+    setCommunityPostDraft({
+      type: 'music',
+      title: '',
+      text: '',
+      spotifyUrl: '',
+      mediaUrl: '',
+      albumName: '',
+      rating: 4,
+    })
+    setStatusMessage('Post publicado no feed da comunidade.')
+  }
+
+  const toggleCommunityFeedLike = (postId) => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.map((post) => {
+        if (post.id !== postId) {
+          return post
+        }
+
+        return {
+          ...post,
+          liked: !post.liked,
+          likes: Math.max(0, Number(post.likes || 0) + (post.liked ? -1 : 1)),
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+  }
+
+  const toggleCommunityFeedSave = (postId) => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.map((post) => {
+        if (post.id !== postId) {
+          return post
+        }
+
+        return {
+          ...post,
+          saved: !post.saved,
+          saves: Math.max(0, Number(post.saves || 0) + (post.saved ? -1 : 1)),
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+  }
+
+  const shareCommunityFeedPost = (postId) => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.map((post) =>
+        post.id === postId
+          ? {
+              ...post,
+              shares: Number(post.shares || 0) + 1,
+            }
+          : post,
+      )
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+    setStatusMessage('Post compartilhado.')
+  }
+
+  const sendCommunityFeedComment = (postId) => {
+    if (!currentUser?.id || !selectedCommunity?.id) {
+      return
+    }
+
+    const draftKey = `${selectedCommunity.id}:${postId}`
+    const text = String(communityCommentDrafts[draftKey] || '').trim()
+    if (!text) {
+      return
+    }
+
+    const nextComment = {
+      id: `community-comment-${postId}-${Date.now()}`,
+      text,
+      createdAt: new Date().toISOString(),
+      author: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+      },
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.map((post) =>
+        post.id === postId
+          ? {
+              ...post,
+              comments: [...(post.comments || []), nextComment],
+            }
+          : post,
+      )
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+
+    setCommunityCommentDrafts((current) => ({ ...current, [draftKey]: '' }))
+  }
+
+  const publishCommunityTopic = (event) => {
+    event.preventDefault()
+    if (!currentUser?.id || !selectedCommunity?.id) {
+      return
+    }
+
+    const title = communityTopicDraft.title.trim()
+    const body = communityTopicDraft.body.trim()
+    if (!title || !body) {
+      setErrorMessage('Informe titulo e descricao para criar um topico.')
+      return
+    }
+
+    const nextTopic = {
+      id: `community-topic-${selectedCommunity.id}-${Date.now()}`,
+      title,
+      body,
+      pinned: false,
+      createdAt: new Date().toISOString(),
+      author: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+      },
+      replies: [],
+      bestReplyId: '',
+    }
+
+    setCommunityTopicsById((current) => ({
+      ...current,
+      [selectedCommunity.id]: [nextTopic, ...(current[selectedCommunity.id] || [])],
+    }))
+    setCommunityTopicDraft({ title: '', body: '' })
+    setStatusMessage('Topico criado na comunidade.')
+  }
+
+  const replyCommunityTopic = (topicId) => {
+    if (!currentUser?.id || !selectedCommunity?.id) {
+      return
+    }
+
+    const draftKey = `${selectedCommunity.id}:${topicId}`
+    const text = String(communityReplyDrafts[draftKey] || '').trim()
+    if (!text) {
+      return
+    }
+
+    const nextReply = {
+      id: `topic-reply-${topicId}-${Date.now()}`,
+      text,
+      votes: 0,
+      isBest: false,
+      author: { id: currentUser.id, name: currentUser.name, handle: normalizeHandle(currentUser.handle) },
+      createdAt: new Date().toISOString(),
+    }
+
+    setCommunityTopicsById((current) => {
+      const currentTopics = current[selectedCommunity.id] || []
+      const nextTopics = currentTopics.map((topic) =>
+        topic.id === topicId
+          ? {
+              ...topic,
+              replies: [...(topic.replies || []), nextReply],
+            }
+          : topic,
+      )
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextTopics,
+      }
+    })
+
+    setCommunityReplyDrafts((current) => ({ ...current, [draftKey]: '' }))
+  }
+
+  const voteCommunityReply = (topicId, replyId, delta) => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    setCommunityTopicsById((current) => {
+      const currentTopics = current[selectedCommunity.id] || []
+      const nextTopics = currentTopics.map((topic) => {
+        if (topic.id !== topicId) {
+          return topic
+        }
+
+        return {
+          ...topic,
+          replies: (topic.replies || []).map((reply) =>
+            reply.id === replyId
+              ? {
+                  ...reply,
+                  votes: Number(reply.votes || 0) + delta,
+                }
+              : reply,
+          ),
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextTopics,
+      }
+    })
+  }
+
+  const togglePinnedTopic = (topicId) => {
+    if (!selectedCommunity?.id || selectedCommunity?.creatorId !== currentUser?.id) {
+      return
+    }
+
+    setCommunityTopicsById((current) => {
+      const currentTopics = current[selectedCommunity.id] || []
+      const nextTopics = currentTopics.map((topic) =>
+        topic.id === topicId
+          ? {
+              ...topic,
+              pinned: !topic.pinned,
+            }
+          : topic,
+      )
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextTopics,
+      }
+    })
+  }
+
+  const markTopicBestReply = (topicId, replyId) => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    setCommunityTopicsById((current) => {
+      const currentTopics = current[selectedCommunity.id] || []
+      const nextTopics = currentTopics.map((topic) => {
+        if (topic.id !== topicId || topic.author?.id !== currentUser?.id) {
+          return topic
+        }
+
+        return {
+          ...topic,
+          bestReplyId: topic.bestReplyId === replyId ? '' : replyId,
+          replies: (topic.replies || []).map((reply) => ({
+            ...reply,
+            isBest: topic.bestReplyId === replyId ? false : reply.id === replyId,
+          })),
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextTopics,
+      }
+    })
+  }
+
+  const publishCommunityCollab = (event) => {
+    event.preventDefault()
+    if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    const title = communityCollabDraft.title.trim()
+    const roleNeeded = communityCollabDraft.roleNeeded.trim()
+    const details = communityCollabDraft.details.trim()
+    if (!title || !roleNeeded || !details) {
+      setErrorMessage('Preencha titulo, papel e detalhes para publicar colaboracao.')
+      return
+    }
+
+    const nextRequest = {
+      id: `community-collab-${selectedCommunity.id}-${Date.now()}`,
+      title,
+      roleNeeded,
+      details,
+      createdAt: new Date().toISOString(),
+      status: 'open',
+      applicants: 0,
+      author: { id: currentUser.id, name: currentUser.name, handle: normalizeHandle(currentUser.handle) },
+    }
+
+    setCommunityCollabsById((current) => ({
+      ...current,
+      [selectedCommunity.id]: [nextRequest, ...(current[selectedCommunity.id] || [])],
+    }))
+    setCommunityCollabDraft({ title: '', roleNeeded: '', details: '' })
+  }
+
+  const applyCommunityCollab = (request) => {
+    if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    setCommunityCollabsById((current) => {
+      const list = current[selectedCommunity.id] || []
+      const nextList = list.map((item) =>
+        item.id === request.id
+          ? {
+              ...item,
+              applicants: Number(item.applicants || 0) + 1,
+            }
+          : item,
+      )
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextList,
+      }
+    })
+
+    if (request.author?.id && request.author.id !== currentUser.id) {
+      void openOrCreateDirectWithUser({
+        id: request.author.id,
+        name: request.author.name,
+        handle: request.author.handle,
+        avatarUrl: null,
+      })
+    }
+  }
+
+  const publishCommunityChallenge = (event) => {
+    event.preventDefault()
+    if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    const title = communityChallengeDraft.title.trim()
+    const kind = communityChallengeDraft.kind.trim()
+    const details = communityChallengeDraft.details.trim()
+    const deadline = communityChallengeDraft.deadline
+
+    if (!title || !kind || !details) {
+      setErrorMessage('Preencha titulo, tipo e detalhes para criar desafio.')
+      return
+    }
+
+    const nextChallenge = {
+      id: `community-challenge-${selectedCommunity.id}-${Date.now()}`,
+      title,
+      kind,
+      details,
+      deadline: deadline ? new Date(deadline).toISOString() : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      participants: [],
+      createdAt: new Date().toISOString(),
+      author: { id: currentUser.id, name: currentUser.name, handle: normalizeHandle(currentUser.handle) },
+    }
+
+    setCommunityChallengesById((current) => ({
+      ...current,
+      [selectedCommunity.id]: [nextChallenge, ...(current[selectedCommunity.id] || [])],
+    }))
+    setCommunityChallengeDraft({ title: '', kind: 'cover', details: '', deadline: '' })
+  }
+
+  const joinCommunityChallenge = (challengeId) => {
+    if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    setCommunityChallengesById((current) => {
+      const list = current[selectedCommunity.id] || []
+      const nextList = list.map((challenge) => {
+        if (challenge.id !== challengeId) {
+          return challenge
+        }
+
+        const alreadyJoined = (challenge.participants || []).some((participant) => participant.userId === currentUser.id)
+        if (alreadyJoined) {
+          return challenge
+        }
+
+        const score = 55 + Math.floor(Math.random() * 46)
+        return {
+          ...challenge,
+          participants: [...(challenge.participants || []), { userId: currentUser.id, name: currentUser.name, score }],
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextList,
+      }
+    })
   }
 
   const submitPlaylist = async (event) => {
@@ -4297,9 +5184,69 @@ function App() {
           {activeNav === 'Comunidades' && !publicProfile && (
             <section className="mode-board appear-up">
               <header className="mode-board-head">
-                <h2>Comunidades em alta</h2>
-                <p>Entre em grupos para trocar feedback e collabs.</p>
+                <div>
+                  <h2>Comunidades</h2>
+                  <p>Descubra grupos, participe de discussões e acompanhe rankings internos.</p>
+                </div>
+                <div className="community-stats-row">
+                  <span className="community-stat-pill">Total {compact(communityStats.total)}</span>
+                  <span className="community-stat-pill">Participando {compact(communityStats.joined)}</span>
+                  <span className="community-stat-pill">Minhas {compact(communityStats.mine)}</span>
+                </div>
               </header>
+
+              <div className="community-controls">
+                <input
+                  type="search"
+                  value={communityQuery}
+                  onChange={(event) => setCommunityQuery(event.target.value)}
+                  placeholder="Buscar comunidade por nome, descricao ou criador..."
+                />
+                <div className="community-filter-row">
+                  <button
+                    type="button"
+                    className={communityGenreFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
+                    onClick={() => setCommunityGenreFilter('all')}
+                  >
+                    Todos os generos
+                  </button>
+                  {communityGenreOptions.map((genre) => (
+                    <button
+                      type="button"
+                      key={`community-genre-${genre}`}
+                      className={communityGenreFilter === genre ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityGenreFilter(genre)}
+                    >
+                      {genre}
+                    </button>
+                  ))}
+                </div>
+                <div className="community-filter-row">
+                  <button
+                    type="button"
+                    className={communityFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
+                    onClick={() => setCommunityFilter('all')}
+                  >
+                    Todas
+                  </button>
+                  <button
+                    type="button"
+                    className={communityFilter === 'joined' ? 'secondary-btn followed' : 'secondary-btn'}
+                    onClick={() => setCommunityFilter('joined')}
+                  >
+                    Participando
+                  </button>
+                  <button
+                    type="button"
+                    className={communityFilter === 'mine' ? 'secondary-btn followed' : 'secondary-btn'}
+                    onClick={() => setCommunityFilter('mine')}
+                    disabled={!currentUser}
+                  >
+                    Criadas por mim
+                  </button>
+                </div>
+              </div>
+
               <div className="community-ranking-periods">
                 {spotifyCapsulePeriods.map((periodOption) => (
                   <button
@@ -4339,15 +5286,556 @@ function App() {
                   {creatingCommunity ? 'Criando...' : 'Criar comunidade'}
                 </button>
               </form>
+
+              {selectedCommunity && (
+                <article className="community-focus-card">
+                  <header className="community-focus-head">
+                    <div>
+                      <h3>{selectedCommunity.name}</h3>
+                      <p>{selectedCommunity.description || 'Comunidade sem descricao por enquanto.'}</p>
+                    </div>
+                    <span className="community-focus-meta">
+                      {compact(selectedCommunity.members || 0)} membros • {selectedCommunityGenre} • @{normalizeHandle(selectedCommunity.creatorHandle || 'comunidade')}
+                    </span>
+                  </header>
+
+                  <div className="community-focus-actions">
+                    <button
+                      type="button"
+                      className={selectedCommunity.joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                      onClick={() => toggleCommunityJoin(selectedCommunity.id, { confirmLeave: selectedCommunity.joined })}
+                    >
+                      {selectedCommunity.joined ? 'Sair da comunidade' : 'Participar da comunidade'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => void openPublicProfile(selectedCommunity.creatorHandle || '')}
+                    >
+                      Ver criador
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      disabled={!selectedCommunity.creatorId || selectedCommunity.creatorId === currentUser?.id}
+                      onClick={() =>
+                        void openOrCreateDirectWithUser({
+                          id: selectedCommunity.creatorId,
+                          name: selectedCommunity.creatorName,
+                          handle: normalizeHandle(selectedCommunity.creatorHandle || ''),
+                          avatarUrl: null,
+                        })
+                      }
+                    >
+                      Falar no direct
+                    </button>
+                  </div>
+
+                  <div className="community-leaderboard">
+                    <strong className="community-leaderboard-title">
+                      Top ouvintes ({capsulePeriodLabel(communityRankPeriod)})
+                    </strong>
+                    {loadingCommunityRankings ? (
+                      <p className="community-leaderboard-empty">Carregando ranking...</p>
+                    ) : (communityRankingsById[selectedCommunity.id] || []).length > 0 ? (
+                      <ul className="community-leaderboard-list">
+                        {(communityRankingsById[selectedCommunity.id] || []).map((entry, index) => (
+                          <li key={`${selectedCommunity.id}-focus-rank-${entry.userId || entry.id || index}`}>
+                            <span className="community-rank-pos">#{entry.rank || index + 1}</span>
+                            <div className="community-rank-user">
+                              <strong>{entry.user?.name || 'Usuario'}</strong>
+                              <p>@{normalizeHandle(entry.user?.handle || 'usuario')}</p>
+                            </div>
+                            <div className="community-rank-score">
+                              <strong>{compact(entry.score || 0)}</strong>
+                              <span>pts</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="community-leaderboard-empty">Sem ranking nesta comunidade ainda.</p>
+                    )}
+                  </div>
+                </article>
+              )}
+
+              {selectedCommunity && (
+                <section className="community-workspace">
+                  <header className="community-workspace-head">
+                    <h3>Hub da comunidade</h3>
+                    <p>
+                      Genero: <strong>{selectedCommunityGenre}</strong>
+                    </p>
+                  </header>
+
+                  <div className="community-workspace-tabs">
+                    <button
+                      type="button"
+                      className={communityWorkspaceTab === 'feed' ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityWorkspaceTab('feed')}
+                    >
+                      Feed
+                    </button>
+                    <button
+                      type="button"
+                      className={communityWorkspaceTab === 'forum' ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityWorkspaceTab('forum')}
+                    >
+                      Forum
+                    </button>
+                    <button
+                      type="button"
+                      className={communityWorkspaceTab === 'collab' ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityWorkspaceTab('collab')}
+                    >
+                      Colaboracao
+                    </button>
+                    <button
+                      type="button"
+                      className={communityWorkspaceTab === 'challenges' ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityWorkspaceTab('challenges')}
+                    >
+                      Desafios
+                    </button>
+                    <button
+                      type="button"
+                      className={communityWorkspaceTab === 'playlists' ? 'secondary-btn followed' : 'secondary-btn'}
+                      onClick={() => setCommunityWorkspaceTab('playlists')}
+                    >
+                      Playlists
+                    </button>
+                  </div>
+
+                  {communityWorkspaceTab === 'feed' && (
+                    <div className="community-workspace-pane">
+                      <form className="community-inline-form" onSubmit={publishCommunityPost}>
+                        <div className="community-inline-grid">
+                          <select
+                            value={communityPostDraft.type}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({ ...current, type: event.target.value }))
+                            }
+                          >
+                            {communityPostTypeOptions.map((option) => (
+                              <option key={`community-post-type-${option.id}`} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={communityPostDraft.title}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({ ...current, title: event.target.value }))
+                            }
+                            placeholder="Titulo do post"
+                          />
+                          <input
+                            type="text"
+                            value={communityPostDraft.spotifyUrl}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({ ...current, spotifyUrl: event.target.value }))
+                            }
+                            placeholder="Link Spotify (opcional)"
+                          />
+                          <input
+                            type="text"
+                            value={communityPostDraft.mediaUrl}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({ ...current, mediaUrl: event.target.value }))
+                            }
+                            placeholder="URL de imagem/video (opcional)"
+                          />
+                          <input
+                            type="text"
+                            value={communityPostDraft.albumName}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({ ...current, albumName: event.target.value }))
+                            }
+                            placeholder="Album (opcional)"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            max={5}
+                            value={communityPostDraft.rating}
+                            onChange={(event) =>
+                              setCommunityPostDraft((current) => ({
+                                ...current,
+                                rating: Math.max(1, Math.min(5, Number(event.target.value || 4))),
+                              }))
+                            }
+                            placeholder="Nota 1-5"
+                            disabled={communityPostDraft.type !== 'rating'}
+                          />
+                        </div>
+                        <textarea
+                          value={communityPostDraft.text}
+                          onChange={(event) =>
+                            setCommunityPostDraft((current) => ({ ...current, text: event.target.value }))
+                          }
+                          placeholder="Escreva opiniao, feedback ou contexto do post..."
+                        />
+                        <button type="submit" className="primary-btn">
+                          Publicar no feed da comunidade
+                        </button>
+                      </form>
+
+                      <div className="community-post-list">
+                        {activeCommunityFeed.map((post) => {
+                          const commentDraftKey = `${selectedCommunity.id}:${post.id}`
+                          return (
+                            <article key={post.id} className="community-post-card">
+                              <header>
+                                <strong>{post.title || 'Post da comunidade'}</strong>
+                                <span>{post.type}</span>
+                              </header>
+                              {post.text && <p>{post.text}</p>}
+                              {post.albumName && <p className="community-post-meta">Album: {post.albumName}</p>}
+                              {post.spotifyUrl && (
+                                <a href={post.spotifyUrl} target="_blank" rel="noreferrer" className="community-post-link">
+                                  Ouvir no Spotify
+                                </a>
+                              )}
+                              {post.mediaUrl && (
+                                <a href={post.mediaUrl} target="_blank" rel="noreferrer" className="community-post-link">
+                                  Abrir midia
+                                </a>
+                              )}
+                              {post.type === 'rating' && post.rating > 0 && (
+                                <p className="community-post-rating">{'★'.repeat(post.rating)}{'☆'.repeat(5 - post.rating)}</p>
+                              )}
+                              <div className="community-post-actions">
+                                <button type="button" className={post.liked ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => toggleCommunityFeedLike(post.id)}>
+                                  Curtir {compact(post.likes || 0)}
+                                </button>
+                                <button type="button" className="secondary-btn" onClick={() => shareCommunityFeedPost(post.id)}>
+                                  Compartilhar {compact(post.shares || 0)}
+                                </button>
+                                <button type="button" className={post.saved ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => toggleCommunityFeedSave(post.id)}>
+                                  Salvar {compact(post.saves || 0)}
+                                </button>
+                              </div>
+                              <div className="community-comment-form">
+                                <input
+                                  type="text"
+                                  value={communityCommentDrafts[commentDraftKey] || ''}
+                                  onChange={(event) =>
+                                    setCommunityCommentDrafts((current) => ({ ...current, [commentDraftKey]: event.target.value }))
+                                  }
+                                  placeholder="Comentar no post..."
+                                />
+                                <button type="button" className="secondary-btn" onClick={() => sendCommunityFeedComment(post.id)}>
+                                  Comentar
+                                </button>
+                              </div>
+                              {(post.comments || []).length > 0 && (
+                                <ul className="community-comment-list">
+                                  {(post.comments || []).slice(-3).map((comment) => (
+                                    <li key={comment.id}>
+                                      <strong>{comment.author?.name || 'Usuario'}</strong>
+                                      <p>{comment.text}</p>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </article>
+                          )
+                        })}
+                        {activeCommunityFeed.length === 0 && (
+                          <div className="notice">Sem posts ainda. Publique o primeiro conteudo da comunidade.</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {communityWorkspaceTab === 'forum' && (
+                    <div className="community-workspace-pane">
+                      <form className="community-inline-form" onSubmit={publishCommunityTopic}>
+                        <div className="community-inline-grid two">
+                          <input
+                            type="text"
+                            value={communityTopicDraft.title}
+                            onChange={(event) => setCommunityTopicDraft((current) => ({ ...current, title: event.target.value }))}
+                            placeholder="Titulo do topico"
+                          />
+                          <input
+                            type="text"
+                            value={communityTopicDraft.body}
+                            onChange={(event) => setCommunityTopicDraft((current) => ({ ...current, body: event.target.value }))}
+                            placeholder="Resumo do topico"
+                          />
+                        </div>
+                        <button type="submit" className="primary-btn">
+                          Criar topico
+                        </button>
+                      </form>
+
+                      <div className="community-topic-list">
+                        {activeCommunityTopics.map((topic) => (
+                          <article key={topic.id} className="community-topic-card">
+                            <header>
+                              <strong>{topic.title}</strong>
+                              <div className="community-topic-badges">
+                                {topic.pinned && <span className="community-topic-badge">Fixado</span>}
+                                {topic.bestReplyId && <span className="community-topic-badge">Resposta marcada</span>}
+                              </div>
+                            </header>
+                            <p>{topic.body}</p>
+                            <div className="community-post-actions">
+                              <button type="button" className="secondary-btn" onClick={() => togglePinnedTopic(topic.id)}>
+                                {topic.pinned ? 'Desfixar' : 'Fixar'}
+                              </button>
+                            </div>
+                            <ul className="community-reply-list">
+                              {(topic.replies || []).map((reply) => (
+                                <li key={reply.id}>
+                                  <div>
+                                    <strong>{reply.author?.name || 'Usuario'}</strong>
+                                    <p>{reply.text}</p>
+                                  </div>
+                                  <div className="community-reply-actions">
+                                    <button type="button" className="secondary-btn" onClick={() => voteCommunityReply(topic.id, reply.id, 1)}>
+                                      +1
+                                    </button>
+                                    <span>{reply.votes || 0}</span>
+                                    <button type="button" className="secondary-btn" onClick={() => voteCommunityReply(topic.id, reply.id, -1)}>
+                                      -1
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={reply.isBest ? 'secondary-btn followed' : 'secondary-btn'}
+                                      onClick={() => markTopicBestReply(topic.id, reply.id)}
+                                    >
+                                      Melhor resposta
+                                    </button>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="community-comment-form">
+                              <input
+                                type="text"
+                                value={communityReplyDrafts[`${selectedCommunity.id}:${topic.id}`] || ''}
+                                onChange={(event) =>
+                                  setCommunityReplyDrafts((current) => ({
+                                    ...current,
+                                    [`${selectedCommunity.id}:${topic.id}`]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Responder topico..."
+                              />
+                              <button type="button" className="secondary-btn" onClick={() => replyCommunityTopic(topic.id)}>
+                                Responder
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {communityWorkspaceTab === 'collab' && (
+                    <div className="community-workspace-pane">
+                      <form className="community-inline-form" onSubmit={publishCommunityCollab}>
+                        <div className="community-inline-grid three">
+                          <input
+                            type="text"
+                            value={communityCollabDraft.title}
+                            onChange={(event) => setCommunityCollabDraft((current) => ({ ...current, title: event.target.value }))}
+                            placeholder="Titulo do pedido"
+                          />
+                          <input
+                            type="text"
+                            value={communityCollabDraft.roleNeeded}
+                            onChange={(event) => setCommunityCollabDraft((current) => ({ ...current, roleNeeded: event.target.value }))}
+                            placeholder="Procuro: vocal, guitarra, beatmaker..."
+                          />
+                          <input
+                            type="text"
+                            value={communityCollabDraft.details}
+                            onChange={(event) => setCommunityCollabDraft((current) => ({ ...current, details: event.target.value }))}
+                            placeholder="Detalhes do projeto"
+                          />
+                        </div>
+                        <button type="submit" className="primary-btn">
+                          Publicar colaboracao
+                        </button>
+                      </form>
+
+                      <div className="community-collab-list">
+                        {activeCommunityCollabs.map((request) => (
+                          <article key={request.id} className="community-post-card">
+                            <header>
+                              <strong>{request.title}</strong>
+                              <span>{request.roleNeeded}</span>
+                            </header>
+                            <p>{request.details}</p>
+                            <p className="community-post-meta">{compact(request.applicants || 0)} interessados</p>
+                            <div className="community-post-actions">
+                              <button type="button" className="secondary-btn" onClick={() => applyCommunityCollab(request)}>
+                                Quero colaborar
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-btn"
+                                onClick={() =>
+                                  void openOrCreateDirectWithUser({
+                                    id: request.author?.id,
+                                    name: request.author?.name,
+                                    handle: normalizeHandle(request.author?.handle || ''),
+                                    avatarUrl: null,
+                                  })
+                                }
+                              >
+                                Abrir chat
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {communityWorkspaceTab === 'challenges' && (
+                    <div className="community-workspace-pane">
+                      <form className="community-inline-form" onSubmit={publishCommunityChallenge}>
+                        <div className="community-inline-grid">
+                          <input
+                            type="text"
+                            value={communityChallengeDraft.title}
+                            onChange={(event) => setCommunityChallengeDraft((current) => ({ ...current, title: event.target.value }))}
+                            placeholder="Nome do desafio"
+                          />
+                          <select
+                            value={communityChallengeDraft.kind}
+                            onChange={(event) => setCommunityChallengeDraft((current) => ({ ...current, kind: event.target.value }))}
+                          >
+                            <option value="cover">Cover</option>
+                            <option value="composicao">Composicao</option>
+                            <option value="beat">Beat</option>
+                          </select>
+                          <input
+                            type="date"
+                            value={communityChallengeDraft.deadline}
+                            onChange={(event) => setCommunityChallengeDraft((current) => ({ ...current, deadline: event.target.value }))}
+                          />
+                        </div>
+                        <textarea
+                          value={communityChallengeDraft.details}
+                          onChange={(event) => setCommunityChallengeDraft((current) => ({ ...current, details: event.target.value }))}
+                          placeholder="Regras do desafio..."
+                        />
+                        <button type="submit" className="primary-btn">
+                          Criar desafio
+                        </button>
+                      </form>
+
+                      <div className="community-challenge-list">
+                        {activeCommunityChallenges.map((challenge) => {
+                          const ranking = [...(challenge.participants || [])].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+                          return (
+                            <article key={challenge.id} className="community-post-card">
+                              <header>
+                                <strong>{challenge.title}</strong>
+                                <span>{challenge.kind}</span>
+                              </header>
+                              <p>{challenge.details}</p>
+                              <p className="community-post-meta">
+                                Prazo: {new Date(challenge.deadline).toLocaleDateString('pt-BR')} • participantes {compact(ranking.length)}
+                              </p>
+                              <div className="community-post-actions">
+                                <button type="button" className="secondary-btn" onClick={() => joinCommunityChallenge(challenge.id)}>
+                                  Participar do desafio
+                                </button>
+                              </div>
+                              {ranking.length > 0 && (
+                                <ul className="community-leaderboard-list">
+                                  {ranking.slice(0, 5).map((participant, index) => (
+                                    <li key={`${challenge.id}-participant-${participant.userId}`}>
+                                      <span className="community-rank-pos">#{index + 1}</span>
+                                      <div className="community-rank-user">
+                                        <strong>{participant.name}</strong>
+                                        <p>Participante</p>
+                                      </div>
+                                      <div className="community-rank-score">
+                                        <strong>{participant.score}</strong>
+                                        <span>pts</span>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </article>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {communityWorkspaceTab === 'playlists' && (
+                    <div className="community-workspace-pane">
+                      <div className="community-playlist-grid">
+                        {activeCommunityFeed
+                          .filter((post) => post.type === 'playlist' && post.spotifyUrl)
+                          .map((post) => (
+                            <article key={`playlist-post-${post.id}`} className="community-post-card">
+                              <header>
+                                <strong>{post.title || 'Playlist da comunidade'}</strong>
+                                <span>Playlist</span>
+                              </header>
+                              {post.text && <p>{post.text}</p>}
+                              <div className="community-post-actions">
+                                <a href={post.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn mode-link-btn">
+                                  Ouvir
+                                </a>
+                                <button type="button" className={post.saved ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => toggleCommunityFeedSave(post.id)}>
+                                  Salvar
+                                </button>
+                                <button type="button" className="secondary-btn" onClick={() => shareCommunityFeedPost(post.id)}>
+                                  Comentar/Compartilhar
+                                </button>
+                              </div>
+                            </article>
+                          ))}
+
+                        {playlists.slice(0, 6).map((playlist) => (
+                          <article key={`community-playlist-lib-${playlist.id}`} className="community-post-card">
+                            <header>
+                              <strong>{playlist.title}</strong>
+                              <span>@{normalizeHandle(playlist.creatorHandle || 'usuario')}</span>
+                            </header>
+                            <p>{playlist.description || 'Playlist compartilhada na comunidade.'}</p>
+                            <div className="community-post-actions">
+                              <a href={playlist.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn mode-link-btn">
+                                Ouvir
+                              </a>
+                              <button type="button" className={playlist.saved ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => togglePlaylistSave(playlist.id)}>
+                                {playlist.saved ? 'Salva' : 'Salvar'}
+                              </button>
+                              <button type="button" className="secondary-btn" onClick={() => applyPlaylistInComposer(playlist)}>
+                                Postar no feed
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {loadingCommunities && <div className="notice">Carregando comunidades...</div>}
               <div className="mode-board-grid">
-                {communities.map((community) => {
+                {filteredCommunities.map((community) => {
                   const joined = Boolean(community.joined)
                   const communityRanking = communityRankingsById[community.id] || []
+                  const isSelected = selectedCommunity?.id === community.id
                   return (
                     <article
                       key={community.id}
-                      className="mode-card"
+                      className={isSelected ? 'mode-card is-selected' : 'mode-card'}
                       style={{
                         borderColor: community.themeColor || undefined,
                       }}
@@ -4355,47 +5843,40 @@ function App() {
                       <h3>{community.name}</h3>
                       <p>{community.description || 'Comunidade sem descricao por enquanto.'}</p>
                       <span>
-                        {compact(community.members || 0)} membros • @{normalizeHandle(community.creatorHandle || 'comunidade')}
+                        {compact(community.members || 0)} membros • {detectCommunityGenre(community)} • @{normalizeHandle(community.creatorHandle || 'comunidade')}
                       </span>
-                      <div className="community-leaderboard">
-                        <strong className="community-leaderboard-title">
-                          Top ouvintes ({capsulePeriodLabel(communityRankPeriod)})
-                        </strong>
-                        {loadingCommunityRankings ? (
-                          <p className="community-leaderboard-empty">Carregando ranking...</p>
-                        ) : communityRanking.length > 0 ? (
-                          <ul className="community-leaderboard-list">
-                            {communityRanking.map((entry, index) => (
-                              <li key={`${community.id}-rank-${entry.userId || entry.id || index}`}>
-                                <span className="community-rank-pos">#{entry.rank || index + 1}</span>
-                                <div className="community-rank-user">
-                                  <strong>{entry.user?.name || 'Usuario'}</strong>
-                                  <p>@{normalizeHandle(entry.user?.handle || 'usuario')}</p>
-                                </div>
-                                <div className="community-rank-score">
-                                  <strong>{compact(entry.score || 0)}</strong>
-                                  <span>pts</span>
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="community-leaderboard-empty">Sem ranking nesta comunidade ainda.</p>
-                        )}
+                      {communityRanking[0] && (
+                        <div className="community-top-one">
+                          <span>Top #1</span>
+                          <strong>{communityRanking[0]?.user?.name || 'Usuario'}</strong>
+                          <p>{compact(communityRanking[0]?.score || 0)} pts</p>
+                        </div>
+                      )}
+                      <div className="community-card-actions">
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setSelectedCommunityId(community.id)}
+                        >
+                          Ver detalhes
+                        </button>
+                        <button
+                          type="button"
+                          className={joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                          onClick={() => toggleCommunityJoin(community.id, { confirmLeave: joined })}
+                        >
+                          {joined ? 'Sair' : 'Participar'}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        className={joined ? 'secondary-btn followed' : 'secondary-btn'}
-                        onClick={() => toggleCommunityJoin(community.id)}
-                      >
-                        {joined ? 'Participando' : 'Participar'}
-                      </button>
                     </article>
                   )
                 })}
               </div>
               {!loadingCommunities && communities.length === 0 && (
                 <div className="notice">Nenhuma comunidade criada ainda. Crie a primeira.</div>
+              )}
+              {!loadingCommunities && communities.length > 0 && filteredCommunities.length === 0 && (
+                <div className="notice">Nenhuma comunidade encontrada com esse filtro.</div>
               )}
             </section>
           )}
