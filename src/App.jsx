@@ -32,6 +32,7 @@ import {
   fetchFollowStats,
   fetchFeed,
   fetchPeopleToFollow,
+  fetchRisingArtists,
   fetchSpotifyPlaylists,
   searchProfiles,
   fetchPublicProfileByHandle,
@@ -48,12 +49,19 @@ import {
   signUp,
   toggleFollowUser,
   toggleLike,
+  toggleRisingArtistSupport,
   toggleSaveSpotifyPlaylist,
   toggleRepost,
   toggleCommunityMembership,
+  requestCommunityJoin,
+  fetchCommunityMembers,
+  updateCommunityMemberRole,
+  fetchCommunityJoinRequests,
+  reviewCommunityJoinRequest,
   upsertSpotifyConnection,
   updateOwnProfile,
   updateCommunity,
+  upsertRisingArtist,
   updatePost,
 } from './services/socialApi'
 
@@ -482,12 +490,16 @@ const playlistCards = [
 ]
 
 function buildLocalCommunityCards() {
-  return communityCards.map((community) => ({
+  return communityCards.map((community, index) => ({
     ...community,
     creatorId: 'wave-system',
     creatorName: 'WaveLoop',
     creatorHandle: 'waveloop',
+    visibility: index === 0 ? 'public' : 'private',
+    requiresApproval: index !== 0,
     joined: false,
+    myRole: '',
+    joinRequestStatus: '',
   }))
 }
 
@@ -507,7 +519,190 @@ function buildLocalPlaylistCards() {
   }))
 }
 
+const risingArtistSeedCards = [
+  {
+    id: 'rising-1',
+    userId: 'artist-1',
+    stageName: 'Aurora Sul',
+    bio: 'Duo de indie pop autoral com sintetizadores e letras urbanas.',
+    genre: 'Indie Pop',
+    city: 'Sao Paulo, SP',
+    isBand: true,
+    spotifyUrl: 'https://open.spotify.com/artist/1vCWHaC5f2uS3yhpwWbIA6',
+    soundcloudUrl: '',
+    instagramUrl: '',
+    coverUrl: '',
+    supports: 78,
+    supported: false,
+    createdAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'rising-2',
+    userId: 'artist-2',
+    stageName: 'Mika Nova',
+    bio: 'Cantora de bedroom pop com foco em vocal e composicao intimista.',
+    genre: 'Pop',
+    city: 'Curitiba, PR',
+    isBand: false,
+    spotifyUrl: 'https://open.spotify.com/artist/1uNFoZAHBGtllmzznpCI3s',
+    soundcloudUrl: '',
+    instagramUrl: '',
+    coverUrl: '',
+    supports: 41,
+    supported: false,
+    createdAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'rising-3',
+    userId: 'artist-3',
+    stageName: 'Sete e Meio',
+    bio: 'Banda alternativa com pegada lo-fi e guitarras espaciais.',
+    genre: 'Alternative',
+    city: 'Belo Horizonte, MG',
+    isBand: true,
+    spotifyUrl: 'https://open.spotify.com/artist/06HL4z0CvFAxyc27GXpf02',
+    soundcloudUrl: '',
+    instagramUrl: '',
+    coverUrl: '',
+    supports: 19,
+    supported: false,
+    createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+]
+
+function getRisingArtistSeal(supports) {
+  const totalSupports = Math.max(0, Number(supports || 0))
+  if (totalSupports >= 150) {
+    return { tier: 5, label: 'Diamante', stars: 5 }
+  }
+
+  if (totalSupports >= 80) {
+    return { tier: 4, label: 'Platina', stars: 4 }
+  }
+
+  if (totalSupports >= 40) {
+    return { tier: 3, label: 'Ouro', stars: 3 }
+  }
+
+  if (totalSupports >= 15) {
+    return { tier: 2, label: 'Prata', stars: 2 }
+  }
+
+  return { tier: 1, label: 'Bronze', stars: 1 }
+}
+
+function sortRisingArtistsByVisibility(entries) {
+  return [...(entries || [])].sort((a, b) => {
+    const aSeal = getRisingArtistSeal(a?.supports).tier
+    const bSeal = getRisingArtistSeal(b?.supports).tier
+    if (bSeal !== aSeal) {
+      return bSeal - aSeal
+    }
+
+    const supportDiff = Number(b?.supports || 0) - Number(a?.supports || 0)
+    if (supportDiff !== 0) {
+      return supportDiff
+    }
+
+    return new Date(b?.updatedAt || b?.createdAt || 0).getTime() - new Date(a?.updatedAt || a?.createdAt || 0).getTime()
+  })
+}
+
+function buildLocalRisingArtists(currentUser) {
+  const baseCards = risingArtistSeedCards.map((entry, index) => ({
+    ...entry,
+    user: {
+      id: entry.userId,
+      name: entry.stageName,
+      handle: normalizeHandle(entry.stageName.replace(/\s+/g, '').toLowerCase()),
+      avatarUrl: null,
+    },
+    isActive: true,
+    updatedAt: entry.createdAt,
+    supported: false,
+    id: entry.id || `rising-seed-${index + 1}`,
+  }))
+
+  if (currentUser?.id) {
+    const ownEntry = {
+      id: `rising-own-${currentUser.id}`,
+      userId: currentUser.id,
+      stageName: currentUser.name,
+      bio: currentUser.bio || 'Novo artista na comunidade WaveLoop.',
+      genre: '',
+      city: '',
+      isBand: false,
+      spotifyUrl: '',
+      soundcloudUrl: '',
+      instagramUrl: '',
+      coverUrl: '',
+      supports: 0,
+      supported: false,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      user: {
+        id: currentUser.id,
+        name: currentUser.name,
+        handle: normalizeHandle(currentUser.handle),
+        avatarUrl: currentUser.avatarUrl || null,
+      },
+    }
+    baseCards.push(ownEntry)
+  }
+
+  return sortRisingArtistsByVisibility(baseCards)
+}
+
 const communityGenreOptions = ['Rock', 'Gospel', 'Trap', 'Lo-fi', 'Musica eletronica', 'Musica crista']
+const communityRoleOptions = ['member', 'moderator', 'admin']
+const communityRoleLabels = {
+  owner: 'Owner',
+  admin: 'Admin',
+  moderator: 'Moderador',
+  member: 'Membro',
+}
+
+const communityRolePermissions = {
+  owner: {
+    editCommunity: true,
+    manageRoles: true,
+    reviewRequests: true,
+    moderateContent: true,
+  },
+  admin: {
+    editCommunity: false,
+    manageRoles: true,
+    reviewRequests: true,
+    moderateContent: true,
+  },
+  moderator: {
+    editCommunity: false,
+    manageRoles: false,
+    reviewRequests: false,
+    moderateContent: true,
+  },
+  member: {
+    editCommunity: false,
+    manageRoles: false,
+    reviewRequests: false,
+    moderateContent: false,
+  },
+  guest: {
+    editCommunity: false,
+    manageRoles: false,
+    reviewRequests: false,
+    moderateContent: false,
+  },
+}
+
+function communityNeedsApproval(community) {
+  if (!community) {
+    return false
+  }
+
+  return community.visibility === 'private' || Boolean(community.requiresApproval)
+}
 
 const communityPostTypeOptions = [
   { id: 'music', label: 'Compartilhar musica' },
@@ -1208,6 +1403,8 @@ function App() {
     genre: '',
     avatarUrl: '',
     coverUrl: '',
+    visibility: 'public',
+    requiresApproval: false,
   })
   const [communityAdminAvatarFile, setCommunityAdminAvatarFile] = useState(null)
   const [communityAdminAvatarPreview, setCommunityAdminAvatarPreview] = useState('')
@@ -1239,6 +1436,12 @@ function App() {
   const [communityCollabsById, setCommunityCollabsById] = useState({})
   const [communityCollabDraft, setCommunityCollabDraft] = useState({ title: '', roleNeeded: '', details: '' })
   const [communityChallengesById, setCommunityChallengesById] = useState({})
+  const [communityMembersById, setCommunityMembersById] = useState({})
+  const [communityJoinRequestsById, setCommunityJoinRequestsById] = useState({})
+  const [loadingCommunityMembers, setLoadingCommunityMembers] = useState(false)
+  const [loadingCommunityRequests, setLoadingCommunityRequests] = useState(false)
+  const [updatingCommunityMemberRoleId, setUpdatingCommunityMemberRoleId] = useState('')
+  const [reviewingCommunityRequestId, setReviewingCommunityRequestId] = useState('')
   const [communityChallengeDraft, setCommunityChallengeDraft] = useState({
     title: '',
     kind: 'cover',
@@ -1249,6 +1452,8 @@ function App() {
     name: '',
     description: '',
     themeColor: '#3b82f6',
+    visibility: 'public',
+    requiresApproval: false,
   })
   const [playlists, setPlaylists] = useState(isSupabaseConfigured ? [] : buildLocalPlaylistCards)
   const [loadingPlaylists, setLoadingPlaylists] = useState(false)
@@ -1258,6 +1463,22 @@ function App() {
     description: '',
     spotifyUrl: '',
   })
+  const [risingArtists, setRisingArtists] = useState(isSupabaseConfigured ? [] : buildLocalRisingArtists(demoUser))
+  const [loadingRisingArtists, setLoadingRisingArtists] = useState(false)
+  const [savingRisingArtist, setSavingRisingArtist] = useState(false)
+  const [risingArtistSupportBusyId, setRisingArtistSupportBusyId] = useState('')
+  const [risingArtistDraft, setRisingArtistDraft] = useState({
+    stageName: '',
+    bio: '',
+    genre: '',
+    city: '',
+    spotifyUrl: '',
+    soundcloudUrl: '',
+    instagramUrl: '',
+    isBand: false,
+  })
+  const [risingArtistQuery, setRisingArtistQuery] = useState('')
+  const [risingArtistGenreFilter, setRisingArtistGenreFilter] = useState('all')
   const [spotifyCapsulePeriod, setSpotifyCapsulePeriod] = useState('4_weeks')
   const [spotifyCapsuleConnection, setSpotifyCapsuleConnection] = useState(null)
   const [spotifyCapsuleMine, setSpotifyCapsuleMine] = useState(null)
@@ -1644,6 +1865,8 @@ function App() {
       avatarUrl: String(custom.avatarUrl || '').trim() || selectedCommunity.avatarUrl || '',
       coverUrl: String(custom.coverUrl || '').trim() || selectedCommunity.coverUrl || '',
       genre: String(custom.genre || '').trim() || String(selectedCommunity.genre || '').trim() || detectCommunityGenre(selectedCommunity),
+      visibility: selectedCommunity.visibility || 'public',
+      requiresApproval: Boolean(selectedCommunity.requiresApproval),
     }
   }, [communityMetaById, selectedCommunity])
 
@@ -1651,9 +1874,81 @@ function App() {
     return selectedCommunityVisual ? selectedCommunityVisual.genre : ''
   }, [selectedCommunityVisual])
 
+  const selectedCommunityRole = useMemo(() => {
+    if (!selectedCommunity) {
+      return 'guest'
+    }
+
+    return selectedCommunity.myRole || (selectedCommunity.joined ? 'member' : 'guest')
+  }, [selectedCommunity])
+
+  const selectedCommunityPermissions = useMemo(() => {
+    return communityRolePermissions[selectedCommunityRole] || communityRolePermissions.guest
+  }, [selectedCommunityRole])
+
+  const canAccessSelectedCommunityContent = useMemo(() => {
+    return Boolean(selectedCommunity?.joined)
+  }, [selectedCommunity?.joined])
+
   const isSelectedCommunityAdmin = useMemo(() => {
-    return Boolean(selectedCommunity?.creatorId && currentUser?.id && selectedCommunity.creatorId === currentUser.id)
-  }, [currentUser?.id, selectedCommunity])
+    return selectedCommunityPermissions.editCommunity
+  }, [selectedCommunityPermissions])
+
+  const selectedCommunityMembers = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return communityMembersById[selectedCommunity.id] || []
+  }, [communityMembersById, selectedCommunity])
+
+  const selectedCommunityJoinRequests = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return []
+    }
+
+    return communityJoinRequestsById[selectedCommunity.id] || []
+  }, [communityJoinRequestsById, selectedCommunity])
+
+  const getCommunityJoinButtonState = useCallback((community) => {
+    if (!community) {
+      return {
+        label: 'Participar',
+        disabled: true,
+        variantClassName: 'secondary-btn followed',
+      }
+    }
+
+    if (community.joined) {
+      return {
+        label: 'Sair',
+        disabled: false,
+        variantClassName: 'secondary-btn community-leave-btn',
+      }
+    }
+
+    if (community.joinRequestStatus === 'pending') {
+      return {
+        label: 'Solicitacao pendente',
+        disabled: true,
+        variantClassName: 'secondary-btn',
+      }
+    }
+
+    if (communityNeedsApproval(community)) {
+      return {
+        label: 'Solicitar entrada',
+        disabled: false,
+        variantClassName: 'secondary-btn followed',
+      }
+    }
+
+    return {
+      label: 'Participar',
+      disabled: false,
+      variantClassName: 'secondary-btn followed',
+    }
+  }, [])
 
   const activeCommunityFeed = useMemo(() => {
     if (!selectedCommunity?.id) {
@@ -1703,6 +1998,68 @@ function App() {
       { likes: 0, reposts: 0, comments: 0 },
     )
   }, [posts])
+
+  const ownRisingArtist = useMemo(() => {
+    if (!currentUser?.id) {
+      return null
+    }
+
+    return risingArtists.find((artist) => artist.userId === currentUser.id) || null
+  }, [currentUser?.id, risingArtists])
+
+  const risingArtistGenres = useMemo(() => {
+    const unique = new Set()
+    for (const artist of risingArtists) {
+      const genre = String(artist?.genre || '').trim()
+      if (genre) {
+        unique.add(genre)
+      }
+    }
+
+    return [...unique].sort((a, b) => a.localeCompare(b))
+  }, [risingArtists])
+
+  const filteredRisingArtists = useMemo(() => {
+    const query = risingArtistQuery.trim().toLowerCase()
+
+    return sortRisingArtistsByVisibility(
+      risingArtists.filter((artist) => {
+        if (risingArtistGenreFilter !== 'all' && String(artist.genre || '').trim() !== risingArtistGenreFilter) {
+          return false
+        }
+
+        if (!query) {
+          return true
+        }
+
+        const haystack = [
+          artist.stageName,
+          artist.bio,
+          artist.genre,
+          artist.city,
+          artist.user?.name,
+          artist.user?.handle,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+
+        return haystack.includes(query)
+      }),
+    )
+  }, [risingArtistGenreFilter, risingArtistQuery, risingArtists])
+
+  const risingArtistStats = useMemo(() => {
+    const totalArtists = risingArtists.length
+    const totalSupports = risingArtists.reduce((acc, artist) => acc + Number(artist.supports || 0), 0)
+    const topTierCount = risingArtists.filter((artist) => getRisingArtistSeal(artist.supports).tier >= 3).length
+
+    return {
+      totalArtists,
+      totalSupports,
+      topTierCount,
+    }
+  }, [risingArtists])
 
   const loadFeed = useCallback(async (userId) => {
     if (!isSupabaseConfigured || !userId) {
@@ -1822,6 +2179,58 @@ function App() {
     [communities, communityRankPeriod, currentUser],
   )
 
+  const loadCommunityMembers = useCallback(
+    async (communityId) => {
+      if (!communityId) {
+        return
+      }
+
+      if (!isSupabaseConfigured) {
+        return
+      }
+
+      setLoadingCommunityMembers(true)
+      try {
+        const members = await fetchCommunityMembers({ communityId })
+        setCommunityMembersById((current) => ({
+          ...current,
+          [communityId]: members,
+        }))
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Falha ao carregar membros da comunidade.'))
+      } finally {
+        setLoadingCommunityMembers(false)
+      }
+    },
+    [],
+  )
+
+  const loadCommunityJoinRequests = useCallback(
+    async (communityId, userId) => {
+      if (!communityId || !userId) {
+        return
+      }
+
+      if (!isSupabaseConfigured) {
+        return
+      }
+
+      setLoadingCommunityRequests(true)
+      try {
+        const requests = await fetchCommunityJoinRequests({ communityId, userId })
+        setCommunityJoinRequestsById((current) => ({
+          ...current,
+          [communityId]: requests,
+        }))
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Falha ao carregar solicitacoes da comunidade.'))
+      } finally {
+        setLoadingCommunityRequests(false)
+      }
+    },
+    [],
+  )
+
   const loadPlaylists = useCallback(async (userId) => {
     if (!isSupabaseConfigured || !userId) {
       setPlaylists(buildLocalPlaylistCards())
@@ -1837,6 +2246,23 @@ function App() {
       setErrorMessage(toMessage(error, 'Falha ao carregar playlists.'))
     } finally {
       setLoadingPlaylists(false)
+    }
+  }, [])
+
+  const loadRisingArtists = useCallback(async (userId) => {
+    if (!isSupabaseConfigured) {
+      setRisingArtists(buildLocalRisingArtists(demoUser))
+      return
+    }
+
+    setLoadingRisingArtists(true)
+    try {
+      const artists = await fetchRisingArtists({ userId: userId || '', limit: 120 })
+      setRisingArtists(sortRisingArtistsByVisibility(artists))
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Falha ao carregar artistas em ascensao.'))
+    } finally {
+      setLoadingRisingArtists(false)
     }
   }, [])
 
@@ -2198,6 +2624,19 @@ function App() {
         setCommunityChallengesById({})
         setCommunityChallengeDraft({ title: '', kind: 'cover', details: '', deadline: '' })
         setPlaylists(buildLocalPlaylistCards())
+        setRisingArtists(buildLocalRisingArtists(demoUser))
+        setRisingArtistDraft({
+          stageName: '',
+          bio: '',
+          genre: '',
+          city: '',
+          spotifyUrl: '',
+          soundcloudUrl: '',
+          instagramUrl: '',
+          isBand: false,
+        })
+        setRisingArtistQuery('')
+        setRisingArtistGenreFilter('all')
         setSpotifyCapsuleConnection(null)
         setSpotifyCapsuleMine(null)
         setSpotifyCapsuleLeaderboard([])
@@ -2222,6 +2661,7 @@ function App() {
           loadPeopleToFollow(nextSession.user.id),
           loadCommunities(nextSession.user.id),
           loadPlaylists(nextSession.user.id),
+          loadRisingArtists(nextSession.user.id),
           loadSpotifyCapsule(nextSession.user.id, '4_weeks'),
           loadStories(nextSession.user.id),
           loadDirectInbox(nextSession.user.id),
@@ -2260,7 +2700,17 @@ function App() {
       isMounted = false
       unsubscribe()
     }
-  }, [loadCommunities, loadDirectInbox, loadFeed, loadFollowStats, loadPeopleToFollow, loadPlaylists, loadSpotifyCapsule, loadStories])
+  }, [
+    loadCommunities,
+    loadDirectInbox,
+    loadFeed,
+    loadFollowStats,
+    loadPeopleToFollow,
+    loadPlaylists,
+    loadRisingArtists,
+    loadSpotifyCapsule,
+    loadStories,
+  ])
 
   useEffect(() => {
     if (activeDirectThread) {
@@ -2282,6 +2732,14 @@ function App() {
 
   useEffect(() => {
     if (!currentUser?.id) {
+      return
+    }
+
+    void loadRisingArtists(currentUser.id)
+  }, [currentUser?.id, loadRisingArtists])
+
+  useEffect(() => {
+    if (!currentUser?.id) {
       setCommunityRankingsById({})
       setLoadingCommunityRankings(false)
       return
@@ -2289,6 +2747,41 @@ function App() {
 
     void loadCommunityRankings(currentUser.id, { period: communityRankPeriod })
   }, [communities, communityRankPeriod, currentUser?.id, loadCommunityRankings])
+
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setRisingArtistDraft({
+        stageName: '',
+        bio: '',
+        genre: '',
+        city: '',
+        spotifyUrl: '',
+        soundcloudUrl: '',
+        instagramUrl: '',
+        isBand: false,
+      })
+      return
+    }
+
+    if (ownRisingArtist) {
+      setRisingArtistDraft({
+        stageName: ownRisingArtist.stageName || currentUser.name || '',
+        bio: ownRisingArtist.bio || '',
+        genre: ownRisingArtist.genre || '',
+        city: ownRisingArtist.city || '',
+        spotifyUrl: ownRisingArtist.spotifyUrl || '',
+        soundcloudUrl: ownRisingArtist.soundcloudUrl || '',
+        instagramUrl: ownRisingArtist.instagramUrl || '',
+        isBand: Boolean(ownRisingArtist.isBand),
+      })
+      return
+    }
+
+    setRisingArtistDraft((current) => ({
+      ...current,
+      stageName: current.stageName || currentUser.name || '',
+    }))
+  }, [currentUser?.id, currentUser?.name, ownRisingArtist])
 
   useEffect(() => {
     if (communityViewMode === 'detail') {
@@ -2321,11 +2814,38 @@ function App() {
   }, [selectedCommunityId])
 
   useEffect(() => {
+    if (!selectedCommunity?.id) {
+      return
+    }
+
+    if (!canAccessSelectedCommunityContent && !selectedCommunityPermissions.manageRoles) {
+      return
+    }
+
+    void loadCommunityMembers(selectedCommunity.id)
+  }, [
+    canAccessSelectedCommunityContent,
+    loadCommunityMembers,
+    selectedCommunity?.id,
+    selectedCommunityPermissions.manageRoles,
+  ])
+
+  useEffect(() => {
+    if (!selectedCommunity?.id || !currentUser?.id || !selectedCommunityPermissions.reviewRequests) {
+      return
+    }
+
+    void loadCommunityJoinRequests(selectedCommunity.id, currentUser.id)
+  }, [currentUser?.id, loadCommunityJoinRequests, selectedCommunity?.id, selectedCommunityPermissions.reviewRequests])
+
+  useEffect(() => {
     if (!communities.length) {
       setCommunityFeedById({})
       setCommunityTopicsById({})
       setCommunityCollabsById({})
       setCommunityChallengesById({})
+      setCommunityMembersById({})
+      setCommunityJoinRequestsById({})
       return
     }
 
@@ -2378,6 +2898,47 @@ function App() {
         }
       }
 
+      return changed ? next : current
+    })
+
+    setCommunityMembersById((current) => {
+      const next = { ...current }
+      let changed = false
+
+      for (const community of communities) {
+        if (!next[community.id]) {
+          const members = []
+          if (community.creatorId) {
+            members.push({
+              communityId: community.id,
+              userId: community.creatorId,
+              role: 'owner',
+              createdAt: community.createdAt || new Date().toISOString(),
+              user: {
+                id: community.creatorId,
+                name: community.creatorName || 'Criador',
+                handle: normalizeHandle(community.creatorHandle || 'criador'),
+                avatarUrl: community.avatarUrl || null,
+              },
+            })
+          }
+          next[community.id] = members
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+
+    setCommunityJoinRequestsById((current) => {
+      const next = { ...current }
+      let changed = false
+      for (const community of communities) {
+        if (!next[community.id]) {
+          next[community.id] = []
+          changed = true
+        }
+      }
       return changed ? next : current
     })
   }, [communities, currentUser])
@@ -4402,6 +4963,8 @@ function App() {
       genre: selectedCommunityVisual.genre || '',
       avatarUrl: selectedCommunityVisual.avatarUrl || '',
       coverUrl: selectedCommunityVisual.coverUrl || '',
+      visibility: selectedCommunityVisual.visibility || 'public',
+      requiresApproval: Boolean(selectedCommunityVisual.requiresApproval),
     })
     setCommunityAdminEditing(true)
   }, [
@@ -4421,8 +4984,8 @@ function App() {
     async (event) => {
       event.preventDefault()
 
-      if (!selectedCommunity || !currentUser?.id || selectedCommunity.creatorId !== currentUser.id) {
-        setErrorMessage('Apenas o admin da comunidade pode editar esses dados.')
+      if (!selectedCommunity || !currentUser?.id || !selectedCommunityPermissions.editCommunity) {
+        setErrorMessage('Apenas owner/admin da comunidade pode editar esses dados.')
         return
       }
 
@@ -4430,6 +4993,8 @@ function App() {
       const description = communityAdminDraft.description.trim()
       const themeColor = communityAdminDraft.themeColor.trim() || '#3b82f6'
       const genre = communityAdminDraft.genre.trim()
+      const visibility = communityAdminDraft.visibility === 'private' ? 'private' : 'public'
+      const requiresApproval = Boolean(communityAdminDraft.requiresApproval)
       let avatarUrl = communityAdminDraft.avatarUrl.trim()
       let coverUrl = communityAdminDraft.coverUrl.trim()
 
@@ -4450,6 +5015,8 @@ function App() {
             description,
             themeColor,
             genre,
+            visibility,
+            requiresApproval,
             avatarFile: communityAdminAvatarFile,
             coverFile: communityAdminCoverFile,
             avatarUrl,
@@ -4467,6 +5034,8 @@ function App() {
                     ...updated,
                     members: community.members,
                     joined: community.joined,
+                    myRole: community.myRole,
+                    joinRequestStatus: community.joinRequestStatus,
                   }
                 : community,
             ),
@@ -4483,6 +5052,8 @@ function App() {
                     genre,
                     avatarUrl,
                     coverUrl,
+                    visibility,
+                    requiresApproval,
                   }
                 : community,
             ),
@@ -4506,6 +5077,8 @@ function App() {
             genre,
             avatarUrl,
             coverUrl,
+            visibility,
+            requiresApproval,
           },
         }))
 
@@ -4525,13 +5098,16 @@ function App() {
       communityAdminDraft.description,
       communityAdminDraft.genre,
       communityAdminDraft.name,
+      communityAdminDraft.requiresApproval,
       communityAdminDraft.themeColor,
+      communityAdminDraft.visibility,
       communityAdminAvatarFile,
       communityAdminCoverFile,
       clearCommunityAdminAvatarSelection,
       clearCommunityAdminCoverSelection,
       currentUser?.id,
       selectedCommunity,
+      selectedCommunityPermissions.editCommunity,
     ],
   )
 
@@ -4543,7 +5119,9 @@ function App() {
 
     const targetCommunity = communities.find((community) => community.id === communityId)
     const joinedBefore = Boolean(targetCommunity?.joined)
-    const isOwner = targetCommunity?.creatorId === currentUser.id
+    const role = targetCommunity?.myRole || ''
+    const isOwner = role === 'owner' || targetCommunity?.creatorId === currentUser.id
+    const requiresApproval = communityNeedsApproval(targetCommunity)
 
     if (joinedBefore && isOwner) {
       setErrorMessage('Voce e criador desta comunidade. Para sair, transfira a criacao para outro perfil.')
@@ -4558,6 +5136,48 @@ function App() {
     }
 
     if (!isSupabaseConfigured) {
+      if (!joinedBefore && requiresApproval) {
+        setCommunities((current) =>
+          current.map((community) =>
+            community.id === communityId
+              ? {
+                  ...community,
+                  joinRequestStatus: 'pending',
+                }
+            : community,
+          ),
+        )
+        setCommunityJoinRequestsById((current) => {
+          const list = current[communityId] || []
+          const hasPending = list.some((request) => request.userId === currentUser.id && request.status === 'pending')
+          if (hasPending) {
+            return current
+          }
+
+          return {
+            ...current,
+            [communityId]: [
+              ...list,
+              {
+                id: `community-request-${communityId}-${currentUser.id}`,
+                communityId,
+                userId: currentUser.id,
+                status: 'pending',
+                createdAt: new Date().toISOString(),
+                user: {
+                  id: currentUser.id,
+                  name: currentUser.name,
+                  handle: normalizeHandle(currentUser.handle),
+                  avatarUrl: currentUser.avatarUrl || null,
+                },
+              },
+            ],
+          }
+        })
+        setStatusMessage('Solicitacao enviada. Aguarde aprovacao de owner/admin.')
+        return
+      }
+
       setCommunities((current) =>
         current.map((community) =>
           community.id === communityId
@@ -4565,10 +5185,44 @@ function App() {
                 ...community,
                 joined: !community.joined,
                 members: Math.max(0, Number(community.members || 0) + (community.joined ? -1 : 1)),
+                myRole: community.joined ? '' : 'member',
+                joinRequestStatus: '',
               }
             : community,
         ),
       )
+      setCommunityMembersById((current) => {
+        const list = current[communityId] || []
+        if (joinedBefore) {
+          return {
+            ...current,
+            [communityId]: list.filter((member) => member.userId !== currentUser.id || member.role === 'owner'),
+          }
+        }
+
+        if (list.some((member) => member.userId === currentUser.id)) {
+          return current
+        }
+
+        return {
+          ...current,
+          [communityId]: [
+            ...list,
+            {
+              communityId,
+              userId: currentUser.id,
+              role: 'member',
+              createdAt: new Date().toISOString(),
+              user: {
+                id: currentUser.id,
+                name: currentUser.name,
+                handle: normalizeHandle(currentUser.handle),
+                avatarUrl: currentUser.avatarUrl || null,
+              },
+            },
+          ],
+        }
+      })
       if (joinedBefore) {
         setStatusMessage('Voce saiu da comunidade.')
       } else {
@@ -4578,6 +5232,35 @@ function App() {
     }
 
     try {
+      if (!joinedBefore && requiresApproval) {
+        const result = await requestCommunityJoin({
+          communityId,
+          userId: currentUser.id,
+        })
+
+        setCommunities((current) =>
+          current.map((community) =>
+            community.id === communityId
+              ? {
+                  ...community,
+                  joined: Boolean(result.joined),
+                  members: result.members ?? community.members,
+                  myRole: result.joined ? 'member' : '',
+                  joinRequestStatus: result.joined ? '' : 'pending',
+                }
+              : community,
+          ),
+        )
+
+        if (result.joined) {
+          setStatusMessage('Agora voce participa da comunidade.')
+          await loadCommunityMembers(communityId)
+        } else {
+          setStatusMessage('Solicitacao enviada. Aguarde aprovacao de owner/admin.')
+        }
+        return
+      }
+
       const result = await toggleCommunityMembership({
         communityId,
         userId: currentUser.id,
@@ -4590,6 +5273,8 @@ function App() {
                 ...community,
                 joined: result.joined,
                 members: result.members,
+                myRole: result.myRole || (result.joined ? community.myRole || 'member' : ''),
+                joinRequestStatus: result.joinRequestStatus || '',
               }
             : community,
         ),
@@ -4602,11 +5287,162 @@ function App() {
 
       if (result.joined) {
         setStatusMessage('Agora voce participa da comunidade.')
+        await loadCommunityMembers(communityId)
       } else {
         setStatusMessage('Voce saiu da comunidade.')
+        await loadCommunityMembers(communityId)
       }
     } catch (error) {
       setErrorMessage(toMessage(error, 'Nao foi possivel atualizar sua comunidade agora.'))
+    }
+  }
+
+  const changeCommunityMemberRole = async (memberUserId, nextRole) => {
+    if (!selectedCommunity?.id || !currentUser?.id || !selectedCommunityPermissions.manageRoles) {
+      setErrorMessage('Sem permissao para alterar cargos nesta comunidade.')
+      return
+    }
+
+    if (!memberUserId || !nextRole) {
+      return
+    }
+
+    setUpdatingCommunityMemberRoleId(memberUserId)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        setCommunityMembersById((current) => {
+          const list = current[selectedCommunity.id] || []
+          const next = list.map((member) =>
+            member.userId === memberUserId && member.role !== 'owner'
+              ? {
+                  ...member,
+                  role: nextRole,
+                }
+              : member,
+          )
+          return {
+            ...current,
+            [selectedCommunity.id]: next,
+          }
+        })
+      } else {
+        await updateCommunityMemberRole({
+          communityId: selectedCommunity.id,
+          actorUserId: currentUser.id,
+          targetUserId: memberUserId,
+          role: nextRole,
+        })
+        await loadCommunityMembers(selectedCommunity.id)
+      }
+
+      setCommunities((current) =>
+        current.map((community) =>
+          community.id === selectedCommunity.id && community.joined && memberUserId === currentUser.id
+            ? {
+                ...community,
+                myRole: nextRole,
+              }
+            : community,
+        ),
+      )
+
+      setStatusMessage('Cargo atualizado com sucesso.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel atualizar cargo deste membro.'))
+    } finally {
+      setUpdatingCommunityMemberRoleId('')
+    }
+  }
+
+  const reviewCommunityAccessRequest = async (requestId, decision) => {
+    if (!selectedCommunity?.id || !currentUser?.id || !selectedCommunityPermissions.reviewRequests) {
+      setErrorMessage('Sem permissao para revisar solicitacoes.')
+      return
+    }
+
+    if (!requestId || !decision) {
+      return
+    }
+
+    setReviewingCommunityRequestId(requestId)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        setCommunityJoinRequestsById((current) => {
+          const list = current[selectedCommunity.id] || []
+          return {
+            ...current,
+            [selectedCommunity.id]: list.filter((request) => request.id !== requestId),
+          }
+        })
+
+        if (decision === 'approved') {
+          const approvedRequest = selectedCommunityJoinRequests.find((request) => request.id === requestId)
+          if (approvedRequest?.user) {
+            setCommunityMembersById((current) => {
+              const list = current[selectedCommunity.id] || []
+              const exists = list.some((member) => member.userId === approvedRequest.userId)
+              if (exists) {
+                return current
+              }
+              return {
+                ...current,
+                [selectedCommunity.id]: [
+                  ...list,
+                  {
+                    communityId: selectedCommunity.id,
+                    userId: approvedRequest.userId,
+                    role: 'member',
+                    createdAt: new Date().toISOString(),
+                    user: approvedRequest.user,
+                  },
+                ],
+              }
+            })
+          }
+
+          setCommunities((current) =>
+            current.map((community) =>
+              community.id === selectedCommunity.id
+                ? {
+                    ...community,
+                    members: Number(community.members || 0) + 1,
+                  }
+                : community,
+            ),
+          )
+        }
+      } else {
+        const result = await reviewCommunityJoinRequest({
+          requestId,
+          communityId: selectedCommunity.id,
+          reviewerUserId: currentUser.id,
+          decision,
+        })
+
+        setCommunities((current) =>
+          current.map((community) =>
+            community.id === selectedCommunity.id
+              ? {
+                  ...community,
+                  members: result.members,
+                }
+              : community,
+          ),
+        )
+
+        await loadCommunityJoinRequests(selectedCommunity.id, currentUser.id)
+        await loadCommunityMembers(selectedCommunity.id)
+      }
+
+      setStatusMessage(decision === 'approved' ? 'Solicitacao aprovada.' : 'Solicitacao rejeitada.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel revisar esta solicitacao.'))
+    } finally {
+      setReviewingCommunityRequestId('')
     }
   }
 
@@ -4664,6 +5500,8 @@ function App() {
     const name = communityDraft.name.trim()
     const description = communityDraft.description.trim()
     const themeColor = communityDraft.themeColor.trim() || '#3b82f6'
+    const visibility = communityDraft.visibility === 'private' ? 'private' : 'public'
+    const requiresApproval = Boolean(communityDraft.requiresApproval)
 
     if (name.length < 3) {
       setErrorMessage('Nome da comunidade precisa ter ao menos 3 caracteres.')
@@ -4684,7 +5522,11 @@ function App() {
           creatorName: currentUser.name,
           creatorHandle: normalizeHandle(currentUser.handle),
           themeColor,
+          visibility,
+          requiresApproval,
           joined: true,
+          myRole: 'owner',
+          joinRequestStatus: '',
         }
         setCommunities((current) => [newCommunity, ...current])
       } else {
@@ -4693,6 +5535,8 @@ function App() {
           name,
           description,
           themeColor,
+          visibility,
+          requiresApproval,
         })
         setCommunities((current) => [created, ...current.filter((community) => community.id !== created.id)])
       }
@@ -4701,6 +5545,8 @@ function App() {
         name: '',
         description: '',
         themeColor: '#3b82f6',
+        visibility: 'public',
+        requiresApproval: false,
       })
       setStatusMessage('Comunidade criada com sucesso.')
     } catch (error) {
@@ -4715,6 +5561,11 @@ function App() {
 
     if (!currentUser?.id || !selectedCommunity?.id) {
       setErrorMessage('Selecione uma comunidade e faca login para publicar.')
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para publicar no feed.')
       return
     }
 
@@ -4848,6 +5699,8 @@ function App() {
       return
     }
 
+    const canModerateAnyPost = Boolean(selectedCommunityPermissions.moderateContent)
+
     if (typeof window !== 'undefined') {
       const confirmed = window.confirm('Deseja excluir este post da comunidade?')
       if (!confirmed) {
@@ -4857,7 +5710,9 @@ function App() {
 
     setCommunityFeedById((current) => {
       const currentPosts = current[selectedCommunity.id] || []
-      const nextPosts = currentPosts.filter((post) => !(post.id === postId && post.author?.id === currentUser.id))
+      const nextPosts = currentPosts.filter(
+        (post) => !(post.id === postId && (post.author?.id === currentUser.id || canModerateAnyPost)),
+      )
 
       return {
         ...current,
@@ -4873,6 +5728,11 @@ function App() {
 
   const toggleCommunityFeedLike = (postId) => {
     if (!selectedCommunity?.id) {
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para interagir com posts.')
       return
     }
 
@@ -4902,6 +5762,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para salvar posts.')
+      return
+    }
+
     setCommunityFeedById((current) => {
       const currentPosts = current[selectedCommunity.id] || []
       const nextPosts = currentPosts.map((post) => {
@@ -4928,6 +5793,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para compartilhar posts.')
+      return
+    }
+
     setCommunityFeedById((current) => {
       const currentPosts = current[selectedCommunity.id] || []
       const nextPosts = currentPosts.map((post) =>
@@ -4949,6 +5819,11 @@ function App() {
 
   const sendCommunityFeedComment = (postId) => {
     if (!currentUser?.id || !selectedCommunity?.id) {
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para comentar.')
       return
     }
 
@@ -4995,6 +5870,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para abrir topicos.')
+      return
+    }
+
     const title = communityTopicDraft.title.trim()
     const body = communityTopicDraft.body.trim()
     if (!title || !body) {
@@ -5027,6 +5907,11 @@ function App() {
 
   const replyCommunityTopic = (topicId) => {
     if (!currentUser?.id || !selectedCommunity?.id) {
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para responder topicos.')
       return
     }
 
@@ -5070,6 +5955,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para votar nas respostas.')
+      return
+    }
+
     setCommunityTopicsById((current) => {
       const currentTopics = current[selectedCommunity.id] || []
       const nextTopics = currentTopics.map((topic) => {
@@ -5098,7 +5988,7 @@ function App() {
   }
 
   const togglePinnedTopic = (topicId) => {
-    if (!selectedCommunity?.id || selectedCommunity?.creatorId !== currentUser?.id) {
+    if (!selectedCommunity?.id || !selectedCommunityPermissions.moderateContent) {
       return
     }
 
@@ -5155,6 +6045,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para publicar colaboracoes.')
+      return
+    }
+
     const title = communityCollabDraft.title.trim()
     const roleNeeded = communityCollabDraft.roleNeeded.trim()
     const details = communityCollabDraft.details.trim()
@@ -5183,6 +6078,11 @@ function App() {
 
   const applyCommunityCollab = (request) => {
     if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para participar de colaboracoes.')
       return
     }
 
@@ -5219,6 +6119,11 @@ function App() {
       return
     }
 
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para criar desafios.')
+      return
+    }
+
     const title = communityChallengeDraft.title.trim()
     const kind = communityChallengeDraft.kind.trim()
     const details = communityChallengeDraft.details.trim()
@@ -5249,6 +6154,11 @@ function App() {
 
   const joinCommunityChallenge = (challengeId) => {
     if (!selectedCommunity?.id || !currentUser?.id) {
+      return
+    }
+
+    if (!selectedCommunity.joined) {
+      setErrorMessage('Entre na comunidade para participar dos desafios.')
       return
     }
 
@@ -5334,6 +6244,154 @@ function App() {
       setErrorMessage(toMessage(error, 'Nao foi possivel criar playlist.'))
     } finally {
       setCreatingPlaylist(false)
+    }
+  }
+
+  const submitRisingArtist = async (event) => {
+    event.preventDefault()
+
+    if (!currentUser?.id) {
+      setErrorMessage('Entre na sua conta para entrar na vitrine de talentos.')
+      return
+    }
+
+    const stageName = risingArtistDraft.stageName.trim() || currentUser.name
+    const bio = risingArtistDraft.bio.trim()
+    const genre = risingArtistDraft.genre.trim()
+    const city = risingArtistDraft.city.trim()
+    const spotifyUrl = risingArtistDraft.spotifyUrl.trim()
+    const soundcloudUrl = risingArtistDraft.soundcloudUrl.trim()
+    const instagramUrl = risingArtistDraft.instagramUrl.trim()
+
+    if (!stageName) {
+      setErrorMessage('Informe seu nome artistico.')
+      return
+    }
+
+    setSavingRisingArtist(true)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        const nextId = ownRisingArtist?.id || `local-rising-${currentUser.id}`
+        const nextPayload = {
+          id: nextId,
+          userId: currentUser.id,
+          stageName,
+          bio,
+          genre,
+          city,
+          isBand: Boolean(risingArtistDraft.isBand),
+          spotifyUrl,
+          soundcloudUrl,
+          instagramUrl,
+          coverUrl: ownRisingArtist?.coverUrl || '',
+          isActive: true,
+          createdAt: ownRisingArtist?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          supports: ownRisingArtist?.supports || 0,
+          supported: false,
+          user: {
+            id: currentUser.id,
+            name: currentUser.name,
+            handle: normalizeHandle(currentUser.handle),
+            avatarUrl: currentUser.avatarUrl || null,
+          },
+        }
+
+        setRisingArtists((current) => {
+          const withoutOwn = current.filter((artist) => artist.userId !== currentUser.id)
+          return sortRisingArtistsByVisibility([nextPayload, ...withoutOwn])
+        })
+      } else {
+        const saved = await upsertRisingArtist({
+          userId: currentUser.id,
+          stageName,
+          bio,
+          genre,
+          city,
+          isBand: risingArtistDraft.isBand,
+          spotifyUrl,
+          soundcloudUrl,
+          instagramUrl,
+          coverUrl: ownRisingArtist?.coverUrl || '',
+          isActive: true,
+        })
+
+        setRisingArtists((current) => {
+          const withoutOwn = current.filter((artist) => artist.userId !== currentUser.id)
+          return sortRisingArtistsByVisibility([saved, ...withoutOwn])
+        })
+
+        await loadRisingArtists(currentUser.id)
+      }
+
+      setStatusMessage('Seu talento agora aparece na vitrine do Explorar.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel salvar seu perfil de talento agora.'))
+    } finally {
+      setSavingRisingArtist(false)
+    }
+  }
+
+  const toggleSupportRisingArtist = async (artist) => {
+    if (!currentUser?.id || !artist?.id) {
+      return
+    }
+
+    if (artist.userId === currentUser.id) {
+      setStatusMessage('Voce nao pode apoiar o proprio perfil, compartilhe com sua comunidade para ganhar visibilidade.')
+      return
+    }
+
+    setRisingArtistSupportBusyId(artist.id)
+    setErrorMessage('')
+
+    try {
+      if (!isSupabaseConfigured) {
+        setRisingArtists((current) =>
+          sortRisingArtistsByVisibility(
+            current.map((entry) => {
+              if (entry.id !== artist.id) {
+                return entry
+              }
+
+              const active = !entry.supported
+              return {
+                ...entry,
+                supported: active,
+                supports: Math.max(0, Number(entry.supports || 0) + (active ? 1 : -1)),
+                updatedAt: new Date().toISOString(),
+              }
+            }),
+          ),
+        )
+        return
+      }
+
+      const result = await toggleRisingArtistSupport({
+        artistId: artist.id,
+        userId: currentUser.id,
+      })
+
+      setRisingArtists((current) =>
+        sortRisingArtistsByVisibility(
+          current.map((entry) =>
+            entry.id === artist.id
+              ? {
+                  ...entry,
+                  supported: result.active,
+                  supports: result.count,
+                  updatedAt: new Date().toISOString(),
+                }
+              : entry,
+          ),
+        ),
+      )
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel apoiar este artista agora.'))
+    } finally {
+      setRisingArtistSupportBusyId('')
     }
   }
 
@@ -5740,6 +6798,196 @@ function App() {
                   ))}
                 </div>
               </section>
+
+              <section className="rising-stage-board appear-up delay-2" aria-label="Talentos em ascensao">
+                <header className="rising-stage-head">
+                  <div>
+                    <h2>Vitrine de talentos em ascensao</h2>
+                    <p>Espaco para artistas e bandas pequenas mostrarem som e ganharem selo de visibilidade.</p>
+                  </div>
+                  <div className="rising-stage-stats">
+                    <span>{compact(risingArtistStats.totalArtists)} artistas</span>
+                    <span>{compact(risingArtistStats.totalSupports)} apoios</span>
+                    <span>{compact(risingArtistStats.topTierCount)} com selo Ouro+</span>
+                  </div>
+                </header>
+
+                <div className="rising-stage-layout">
+                  <form className="rising-stage-form" onSubmit={submitRisingArtist}>
+                    <h3>{ownRisingArtist ? 'Editar meu talento' : 'Entrar na vitrine'}</h3>
+                    <p>Complete seu perfil para aparecer no ranking do Explorar.</p>
+                    <input
+                      type="text"
+                      value={risingArtistDraft.stageName}
+                      onChange={(event) =>
+                        setRisingArtistDraft((current) => ({ ...current, stageName: event.target.value }))
+                      }
+                      placeholder="Nome artistico ou da banda"
+                    />
+                    <div className="rising-stage-form-grid">
+                      <input
+                        type="text"
+                        value={risingArtistDraft.genre}
+                        onChange={(event) =>
+                          setRisingArtistDraft((current) => ({ ...current, genre: event.target.value }))
+                        }
+                        placeholder="Genero musical"
+                      />
+                      <input
+                        type="text"
+                        value={risingArtistDraft.city}
+                        onChange={(event) =>
+                          setRisingArtistDraft((current) => ({ ...current, city: event.target.value }))
+                        }
+                        placeholder="Cidade"
+                      />
+                    </div>
+                    <textarea
+                      value={risingArtistDraft.bio}
+                      onChange={(event) =>
+                        setRisingArtistDraft((current) => ({ ...current, bio: event.target.value }))
+                      }
+                      placeholder="Fale sobre seu projeto, sonoridade e momento."
+                    />
+                    <div className="rising-stage-form-grid">
+                      <input
+                        type="url"
+                        value={risingArtistDraft.spotifyUrl}
+                        onChange={(event) =>
+                          setRisingArtistDraft((current) => ({ ...current, spotifyUrl: event.target.value }))
+                        }
+                        placeholder="Link Spotify"
+                      />
+                      <input
+                        type="url"
+                        value={risingArtistDraft.instagramUrl}
+                        onChange={(event) =>
+                          setRisingArtistDraft((current) => ({ ...current, instagramUrl: event.target.value }))
+                        }
+                        placeholder="Instagram"
+                      />
+                    </div>
+                    <div className="rising-stage-form-grid">
+                      <input
+                        type="url"
+                        value={risingArtistDraft.soundcloudUrl}
+                        onChange={(event) =>
+                          setRisingArtistDraft((current) => ({ ...current, soundcloudUrl: event.target.value }))
+                        }
+                        placeholder="SoundCloud (opcional)"
+                      />
+                      <label className="community-toggle-check rising-stage-toggle">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(risingArtistDraft.isBand)}
+                          onChange={(event) =>
+                            setRisingArtistDraft((current) => ({ ...current, isBand: event.target.checked }))
+                          }
+                        />
+                        Projeto em banda
+                      </label>
+                    </div>
+                    <button type="submit" className="primary-btn" disabled={savingRisingArtist}>
+                      {savingRisingArtist ? 'Salvando...' : ownRisingArtist ? 'Atualizar vitrine' : 'Entrar na vitrine'}
+                    </button>
+                  </form>
+
+                  <div className="rising-stage-list-shell">
+                    <div className="rising-stage-filter-row">
+                      <input
+                        type="search"
+                        value={risingArtistQuery}
+                        onChange={(event) => setRisingArtistQuery(event.target.value)}
+                        placeholder="Buscar artista, genero, cidade..."
+                      />
+                      <select
+                        value={risingArtistGenreFilter}
+                        onChange={(event) => setRisingArtistGenreFilter(event.target.value)}
+                      >
+                        <option value="all">Todos os generos</option>
+                        {risingArtistGenres.map((genreOption) => (
+                          <option key={`rising-genre-${genreOption}`} value={genreOption}>
+                            {genreOption}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {loadingRisingArtists && <div className="notice">Carregando talentos...</div>}
+                    {!loadingRisingArtists && filteredRisingArtists.length === 0 && (
+                      <div className="notice">Ainda nao existem artistas nessa busca. Seja o primeiro da vitrine.</div>
+                    )}
+
+                    {!loadingRisingArtists && filteredRisingArtists.length > 0 && (
+                      <ul className="rising-stage-list">
+                        {filteredRisingArtists.map((artist, index) => {
+                          const seal = getRisingArtistSeal(artist.supports)
+                          const starsText = '★'.repeat(seal.stars)
+                          const canSupport = currentUser?.id && currentUser.id !== artist.userId
+                          return (
+                            <li key={`rising-artist-${artist.id}`} className="rising-stage-item">
+                              <div className="rising-stage-item-head">
+                                <div className="rising-stage-rank">#{index + 1}</div>
+                                <div className="avatar">
+                                  {artist.user?.avatarUrl ? (
+                                    <img src={artist.user.avatarUrl} alt={artist.stageName} />
+                                  ) : (
+                                    initials(artist.stageName || artist.user?.name || 'A')
+                                  )}
+                                </div>
+                                <div className="rising-stage-meta">
+                                  <strong>{artist.stageName}</strong>
+                                  <p>
+                                    @{normalizeHandle(artist.user?.handle || artist.stageName)} •{' '}
+                                    {artist.isBand ? 'Banda' : 'Solo'}
+                                    {artist.city ? ` • ${artist.city}` : ''}
+                                  </p>
+                                </div>
+                                <div className="rising-stage-seal">
+                                  <span>{seal.label}</span>
+                                  <strong>{starsText}</strong>
+                                </div>
+                              </div>
+                              <p className="rising-stage-bio">{artist.bio || 'Sem bio ainda.'}</p>
+                              <div className="rising-stage-tags">
+                                {artist.genre && <span>{artist.genre}</span>}
+                                <span>{compact(artist.supports || 0)} apoios</span>
+                              </div>
+                              <div className="rising-stage-actions">
+                                <button
+                                  type="button"
+                                  className={artist.supported ? 'secondary-btn followed' : 'secondary-btn'}
+                                  disabled={!canSupport || risingArtistSupportBusyId === artist.id}
+                                  onClick={() => void toggleSupportRisingArtist(artist)}
+                                >
+                                  {artist.supported ? 'Apoiando' : 'Apoiar talento'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary-btn"
+                                  onClick={() => void openPublicProfile(artist.user?.handle || '')}
+                                >
+                                  Ver perfil
+                                </button>
+                                {artist.spotifyUrl && (
+                                  <a href={artist.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn rising-link-btn">
+                                    Spotify
+                                  </a>
+                                )}
+                                {artist.instagramUrl && (
+                                  <a href={artist.instagramUrl} target="_blank" rel="noreferrer" className="secondary-btn rising-link-btn">
+                                    Instagram
+                                  </a>
+                                )}
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </section>
             </>
           )}
 
@@ -5939,6 +7187,26 @@ function App() {
                           onChange={(event) => setCommunityDraft((current) => ({ ...current, themeColor: event.target.value }))}
                         />
                       </label>
+                      <select
+                        value={communityDraft.visibility}
+                        onChange={(event) => setCommunityDraft((current) => ({ ...current, visibility: event.target.value }))}
+                      >
+                        <option value="public">Publica</option>
+                        <option value="private">Privada</option>
+                      </select>
+                      <label className="community-toggle-check">
+                        <input
+                          type="checkbox"
+                          checked={communityDraft.requiresApproval}
+                          onChange={(event) =>
+                            setCommunityDraft((current) => ({
+                              ...current,
+                              requiresApproval: event.target.checked,
+                            }))
+                          }
+                        />
+                        Exigir aprovacao para novos membros
+                      </label>
                     </div>
                     <button type="submit" className="primary-btn" disabled={creatingCommunity}>
                       {creatingCommunity ? 'Criando...' : 'Criar comunidade'}
@@ -5948,6 +7216,7 @@ function App() {
                   <div className="mode-board-grid community-list-grid">
                     {filteredCommunities.map((community) => {
                       const joined = Boolean(community.joined)
+                      const joinButtonState = getCommunityJoinButtonState(community)
                       const communityRanking = communityRankingsById[community.id] || []
                       const isSelected = selectedCommunity?.id === community.id
                       return (
@@ -5970,9 +7239,14 @@ function App() {
                           <h3>{community.name}</h3>
                           <p>{community.description || 'Comunidade sem descricao por enquanto.'}</p>
                           <span>
-                            {compact(community.members || 0)} membros • {resolveCommunityGenre(community)} • @{normalizeHandle(community.creatorHandle || 'comunidade')}
+                            {compact(community.members || 0)} membros • {resolveCommunityGenre(community)} •{' '}
+                            {community.visibility === 'private' ? 'Privada' : 'Publica'} • @{normalizeHandle(community.creatorHandle || 'comunidade')}
                           </span>
-                          {communityRanking[0] && (
+                          {community.joinRequestStatus === 'pending' && <span className="community-pending-badge">Solicitacao pendente</span>}
+                          {joined && community.myRole && (
+                            <span className="community-role-badge">{communityRoleLabels[community.myRole] || community.myRole}</span>
+                          )}
+                          {joined && communityRanking[0] && (
                             <div className="community-top-one">
                               <span>Top #1</span>
                               <strong>{communityRanking[0]?.user?.name || 'Usuario'}</strong>
@@ -5992,13 +7266,14 @@ function App() {
                             </button>
                             <button
                               type="button"
-                              className={joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                              className={joinButtonState.variantClassName}
+                              disabled={joinButtonState.disabled}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 void toggleCommunityJoin(community.id, { confirmLeave: joined })
                               }}
                             >
-                              {joined ? 'Sair' : 'Participar'}
+                              {joinButtonState.label}
                             </button>
                           </div>
                         </article>
@@ -6016,6 +7291,10 @@ function App() {
                 <main className="community-fb-center">
                   {communityViewMode === 'detail' && selectedCommunityVisual && (
                     <article className="community-page-hero">
+                      {(() => {
+                        const joinButtonState = getCommunityJoinButtonState(selectedCommunityVisual)
+                        return (
+                          <>
                       <div
                         className="community-page-cover"
                         style={{
@@ -6038,16 +7317,26 @@ function App() {
                             {selectedCommunityVisual.description || 'Comunidade sem bio por enquanto.'}
                           </p>
                           <span>
-                            {compact(selectedCommunityVisual.members || 0)} membros • {selectedCommunityGenre} • @{normalizeHandle(selectedCommunityVisual.creatorHandle || 'comunidade')}
+                            {compact(selectedCommunityVisual.members || 0)} membros • {selectedCommunityGenre} •{' '}
+                            {selectedCommunityVisual.visibility === 'private' ? 'Privada' : 'Publica'} • @{normalizeHandle(selectedCommunityVisual.creatorHandle || 'comunidade')}
                           </span>
+                          {selectedCommunityVisual.joinRequestStatus === 'pending' && (
+                            <span className="community-pending-badge">Sua solicitacao esta pendente</span>
+                          )}
+                          {selectedCommunityVisual.joined && selectedCommunityVisual.myRole && (
+                            <span className="community-role-badge">
+                              Seu cargo: {communityRoleLabels[selectedCommunityVisual.myRole] || selectedCommunityVisual.myRole}
+                            </span>
+                          )}
                         </div>
                         <div className="community-page-actions">
                           <button
                             type="button"
-                            className={selectedCommunityVisual.joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                            className={joinButtonState.variantClassName}
+                            disabled={joinButtonState.disabled}
                             onClick={() => toggleCommunityJoin(selectedCommunityVisual.id, { confirmLeave: selectedCommunityVisual.joined })}
                           >
-                            {selectedCommunityVisual.joined ? 'Sair da comunidade' : 'Participar'}
+                            {joinButtonState.label}
                           </button>
                           <button
                             type="button"
@@ -6078,44 +7367,52 @@ function App() {
                           )}
                         </div>
                       </div>
-
-                      <div className="community-page-tabs">
-                        <button
-                          type="button"
-                          className={communityWorkspaceTab === 'feed' ? 'secondary-btn followed' : 'secondary-btn'}
-                          onClick={() => setCommunityWorkspaceTab('feed')}
-                        >
-                          Discussao
-                        </button>
-                        <button
-                          type="button"
-                          className={communityWorkspaceTab === 'forum' ? 'secondary-btn followed' : 'secondary-btn'}
-                          onClick={() => setCommunityWorkspaceTab('forum')}
-                        >
-                          Topicos
-                        </button>
-                        <button
-                          type="button"
-                          className={communityWorkspaceTab === 'collab' ? 'secondary-btn followed' : 'secondary-btn'}
-                          onClick={() => setCommunityWorkspaceTab('collab')}
-                        >
-                          Colaboracao
-                        </button>
-                        <button
-                          type="button"
-                          className={communityWorkspaceTab === 'challenges' ? 'secondary-btn followed' : 'secondary-btn'}
-                          onClick={() => setCommunityWorkspaceTab('challenges')}
-                        >
-                          Desafios
-                        </button>
-                        <button
-                          type="button"
-                          className={communityWorkspaceTab === 'playlists' ? 'secondary-btn followed' : 'secondary-btn'}
-                          onClick={() => setCommunityWorkspaceTab('playlists')}
-                        >
-                          Midia
-                        </button>
-                      </div>
+                      {canAccessSelectedCommunityContent ? (
+                        <div className="community-page-tabs">
+                          <button
+                            type="button"
+                            className={communityWorkspaceTab === 'feed' ? 'secondary-btn followed' : 'secondary-btn'}
+                            onClick={() => setCommunityWorkspaceTab('feed')}
+                          >
+                            Discussao
+                          </button>
+                          <button
+                            type="button"
+                            className={communityWorkspaceTab === 'forum' ? 'secondary-btn followed' : 'secondary-btn'}
+                            onClick={() => setCommunityWorkspaceTab('forum')}
+                          >
+                            Topicos
+                          </button>
+                          <button
+                            type="button"
+                            className={communityWorkspaceTab === 'collab' ? 'secondary-btn followed' : 'secondary-btn'}
+                            onClick={() => setCommunityWorkspaceTab('collab')}
+                          >
+                            Colaboracao
+                          </button>
+                          <button
+                            type="button"
+                            className={communityWorkspaceTab === 'challenges' ? 'secondary-btn followed' : 'secondary-btn'}
+                            onClick={() => setCommunityWorkspaceTab('challenges')}
+                          >
+                            Desafios
+                          </button>
+                          <button
+                            type="button"
+                            className={communityWorkspaceTab === 'playlists' ? 'secondary-btn followed' : 'secondary-btn'}
+                            onClick={() => setCommunityWorkspaceTab('playlists')}
+                          >
+                            Midia
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="notice">
+                          Entre na comunidade para ver feed, topicos, colaboracoes, desafios e playlists.
+                        </div>
+                      )}
+                          </>
+                        )
+                      })()}
                     </article>
                   )}
 
@@ -6143,6 +7440,30 @@ function App() {
                             </option>
                           ))}
                         </select>
+                      </div>
+                      <div className="community-inline-grid two">
+                        <select
+                          value={communityAdminDraft.visibility}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, visibility: event.target.value }))
+                          }
+                        >
+                          <option value="public">Comunidade publica</option>
+                          <option value="private">Comunidade privada</option>
+                        </select>
+                        <label className="community-toggle-check">
+                          <input
+                            type="checkbox"
+                            checked={communityAdminDraft.requiresApproval}
+                            onChange={(event) =>
+                              setCommunityAdminDraft((current) => ({
+                                ...current,
+                                requiresApproval: event.target.checked,
+                              }))
+                            }
+                          />
+                          Aprovar manualmente novos membros
+                        </label>
                       </div>
                       <div className="community-admin-media-grid">
                         <div className="community-admin-media-card">
@@ -6237,7 +7558,129 @@ function App() {
                     </form>
                   )}
 
-              {communityViewMode === 'detail' && selectedCommunity && (
+                  {communityViewMode === 'detail' &&
+                    selectedCommunity &&
+                    canAccessSelectedCommunityContent &&
+                    (selectedCommunityPermissions.manageRoles || selectedCommunityPermissions.reviewRequests) && (
+                      <section className="community-admin-manager">
+                        {selectedCommunityPermissions.manageRoles && (
+                          <article className="community-admin-manager-card">
+                            <header>
+                              <h3>Cargos dos membros</h3>
+                              <p>Owner/Admin podem ajustar permissoes por membro.</p>
+                            </header>
+                            {loadingCommunityMembers && <div className="notice">Carregando membros...</div>}
+                            {!loadingCommunityMembers && selectedCommunityMembers.length === 0 && (
+                              <div className="notice">Sem membros para gerenciar.</div>
+                            )}
+                            {!loadingCommunityMembers && selectedCommunityMembers.length > 0 && (
+                              <ul className="community-member-role-list">
+                                {selectedCommunityMembers.map((member) => {
+                                  const canEditRole =
+                                    selectedCommunityRole === 'owner'
+                                      ? member.role !== 'owner'
+                                      : member.role !== 'owner' && member.role !== 'admin'
+
+                                  const roleOptionsForActor =
+                                    selectedCommunityRole === 'owner' ? communityRoleOptions : ['moderator', 'member']
+                                  const roleOptions = roleOptionsForActor.includes(member.role)
+                                    ? roleOptionsForActor
+                                    : [member.role, ...roleOptionsForActor]
+
+                                  return (
+                                    <li key={`community-member-role-${member.userId}`}>
+                                      <div className="community-member-role-meta">
+                                        <div className="avatar">
+                                          {member.user?.avatarUrl ? (
+                                            <img src={member.user.avatarUrl} alt={member.user.name} />
+                                          ) : (
+                                            initials(member.user?.name || 'Membro')
+                                          )}
+                                        </div>
+                                        <div>
+                                          <strong>
+                                            {member.user?.name || 'Membro'} {member.userId === currentUser?.id ? '(voce)' : ''}
+                                          </strong>
+                                          <span>@{normalizeHandle(member.user?.handle || 'usuario')}</span>
+                                        </div>
+                                      </div>
+                                      <select
+                                        value={member.role}
+                                        disabled={!canEditRole || updatingCommunityMemberRoleId === member.userId}
+                                        onChange={(event) => {
+                                          void changeCommunityMemberRole(member.userId, event.target.value)
+                                        }}
+                                      >
+                                        {member.role === 'owner' && <option value="owner">Owner</option>}
+                                        {roleOptions.map((roleOption) => (
+                                          <option key={`community-role-option-${member.userId}-${roleOption}`} value={roleOption}>
+                                            {communityRoleLabels[roleOption] || roleOption}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            )}
+                          </article>
+                        )}
+
+                        {selectedCommunityPermissions.reviewRequests && (
+                          <article className="community-admin-manager-card">
+                            <header>
+                              <h3>Solicitacoes de entrada</h3>
+                              <p>Aprove ou recuse pedidos para comunidades privadas.</p>
+                            </header>
+                            {loadingCommunityRequests && <div className="notice">Carregando solicitacoes...</div>}
+                            {!loadingCommunityRequests && selectedCommunityJoinRequests.length === 0 && (
+                              <div className="notice">Nenhuma solicitacao pendente.</div>
+                            )}
+                            {!loadingCommunityRequests && selectedCommunityJoinRequests.length > 0 && (
+                              <ul className="community-request-list">
+                                {selectedCommunityJoinRequests.map((request) => (
+                                  <li key={request.id}>
+                                    <div className="community-member-role-meta">
+                                      <div className="avatar">
+                                        {request.user?.avatarUrl ? (
+                                          <img src={request.user.avatarUrl} alt={request.user.name} />
+                                        ) : (
+                                          initials(request.user?.name || 'Usuario')
+                                        )}
+                                      </div>
+                                      <div>
+                                        <strong>{request.user?.name || 'Usuario'}</strong>
+                                        <span>@{normalizeHandle(request.user?.handle || 'usuario')}</span>
+                                      </div>
+                                    </div>
+                                    <div className="community-request-actions">
+                                      <button
+                                        type="button"
+                                        className="secondary-btn followed"
+                                        disabled={reviewingCommunityRequestId === request.id}
+                                        onClick={() => void reviewCommunityAccessRequest(request.id, 'approved')}
+                                      >
+                                        Aprovar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="secondary-btn community-leave-btn"
+                                        disabled={reviewingCommunityRequestId === request.id}
+                                        onClick={() => void reviewCommunityAccessRequest(request.id, 'rejected')}
+                                      >
+                                        Recusar
+                                      </button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </article>
+                        )}
+                      </section>
+                    )}
+
+              {communityViewMode === 'detail' && selectedCommunity && canAccessSelectedCommunityContent && (
                 <section className="community-workspace">
                   {communityWorkspaceTab === 'feed' && (
                     <div className="community-workspace-pane">
@@ -6318,6 +7761,7 @@ function App() {
                         {activeCommunityFeed.map((post) => {
                           const commentDraftKey = `${selectedCommunity.id}:${post.id}`
                           const isOwnCommunityPost = Boolean(currentUser?.id && post.author?.id === currentUser.id)
+                          const canModerateCommunityPosts = Boolean(selectedCommunityPermissions.moderateContent)
                           const isEditingCommunityPost = isOwnCommunityPost && editingCommunityPostId === post.id
                           return (
                             <article key={post.id} className="community-post-card">
@@ -6325,11 +7769,13 @@ function App() {
                                 <strong>{post.title || 'Post da comunidade'}</strong>
                                 <span>{post.type}</span>
                               </header>
-                              {isOwnCommunityPost && (
+                              {(isOwnCommunityPost || canModerateCommunityPosts) && (
                                 <div className="community-owner-actions">
-                                  <button type="button" className="secondary-btn" onClick={() => startEditingCommunityPost(post)}>
-                                    Editar
-                                  </button>
+                                  {isOwnCommunityPost && (
+                                    <button type="button" className="secondary-btn" onClick={() => startEditingCommunityPost(post)}>
+                                      Editar
+                                    </button>
+                                  )}
                                   <button type="button" className="secondary-btn community-leave-btn" onClick={() => removeCommunityPost(post.id)}>
                                     Excluir
                                   </button>
@@ -6690,9 +8136,20 @@ function App() {
                   {communityWorkspaceTab === 'playlists' && (
                     <div className="community-workspace-pane">
                       <div className="community-playlist-grid">
-                        {activeCommunityFeed
-                          .filter((post) => post.type === 'playlist' && post.spotifyUrl)
-                          .map((post) => {
+                        {(() => {
+                          const communityPlaylistPosts = activeCommunityFeed.filter(
+                            (post) => post.type === 'playlist' && post.spotifyUrl,
+                          )
+
+                          if (communityPlaylistPosts.length === 0) {
+                            return (
+                              <div className="notice">
+                                Nenhuma playlist nesta comunidade ainda. Publique no feed com tipo "Playlist".
+                              </div>
+                            )
+                          }
+
+                          return communityPlaylistPosts.map((post) => {
                             const spotifyData = parseSpotifyUrl(post.spotifyUrl)
 
                             return (
@@ -6734,51 +8191,8 @@ function App() {
                                 </div>
                               </article>
                             )
-                          })}
-
-                        {playlists.slice(0, 6).map((playlist) => {
-                          const spotifyData = parseSpotifyUrl(playlist.spotifyUrl)
-
-                          return (
-                            <article key={`community-playlist-lib-${playlist.id}`} className="community-post-card">
-                              <header>
-                                <strong>{playlist.title}</strong>
-                                <span>@{normalizeHandle(playlist.creatorHandle || 'usuario')}</span>
-                              </header>
-                              <p>{playlist.description || 'Playlist compartilhada na comunidade.'}</p>
-                              {spotifyData?.embedUrl && (
-                                <div className="spotify-card community-playlist-spotify-card">
-                                  <iframe
-                                    src={spotifyData.embedUrl}
-                                    title={`Playlist ${playlist.id}`}
-                                    loading="lazy"
-                                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                                  />
-                                </div>
-                              )}
-                              <div className="community-post-actions">
-                                <a
-                                  href={spotifyData?.url || playlist.spotifyUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="secondary-btn mode-link-btn"
-                                >
-                                  Ouvir
-                                </a>
-                                <button
-                                  type="button"
-                                  className={playlist.saved ? 'secondary-btn followed' : 'secondary-btn'}
-                                  onClick={() => togglePlaylistSave(playlist.id)}
-                                >
-                                  {playlist.saved ? 'Salva' : 'Salvar'}
-                                </button>
-                                <button type="button" className="secondary-btn" onClick={() => applyPlaylistInComposer(playlist)}>
-                                  Postar no feed
-                                </button>
-                              </div>
-                            </article>
-                          )
-                        })}
+                          })
+                        })()}
                       </div>
                     </div>
                   )}
@@ -6800,6 +8214,7 @@ function App() {
                         type="button"
                         key={`community-rank-period-sidebar-${periodOption.id}`}
                         className={communityRankPeriod === periodOption.id ? 'secondary-btn followed' : 'secondary-btn'}
+                        disabled={!canAccessSelectedCommunityContent}
                         onClick={() => setCommunityRankPeriod(periodOption.id)}
                       >
                         Top {periodOption.label}
@@ -6823,7 +8238,9 @@ function App() {
 
                   <article className="community-fb-widget">
                     <h3>Top ouvintes</h3>
-                    {selectedCommunity && loadingCommunityRankings ? (
+                    {selectedCommunity && !canAccessSelectedCommunityContent ? (
+                      <p>Entre na comunidade para desbloquear o ranking de ouvintes.</p>
+                    ) : selectedCommunity && loadingCommunityRankings ? (
                       <p>Carregando ranking...</p>
                     ) : selectedCommunity && (communityRankingsById[selectedCommunity.id] || []).length > 0 ? (
                       <ul className="community-leaderboard-list">

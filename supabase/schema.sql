@@ -778,3 +778,232 @@ create policy "spotify_capsule_delete_own"
 on public.spotify_capsule_snapshots
 for delete
 using (auth.uid() = user_id);
+
+-- Comunidades: privacidade, cargos e solicitacoes de entrada
+alter table public.communities add column if not exists visibility text not null default 'public';
+alter table public.communities add column if not exists requires_approval boolean not null default false;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'communities_visibility_check'
+      and conrelid = 'public.communities'::regclass
+  ) then
+    alter table public.communities
+    add constraint communities_visibility_check
+    check (visibility in ('public', 'private'));
+  end if;
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'community_memberships_role_check'
+      and conrelid = 'public.community_memberships'::regclass
+  ) then
+    alter table public.community_memberships
+    drop constraint community_memberships_role_check;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'community_memberships_role_check_v2'
+      and conrelid = 'public.community_memberships'::regclass
+  ) then
+    alter table public.community_memberships
+    add constraint community_memberships_role_check_v2
+    check (role in ('owner', 'admin', 'moderator', 'member'));
+  end if;
+end $$;
+
+do $$
+declare
+  legacy_constraint record;
+begin
+  for legacy_constraint in
+    select conname
+    from pg_constraint
+    where conrelid = 'public.community_memberships'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%role%'
+      and pg_get_constraintdef(oid) not ilike '%admin%'
+  loop
+    execute format('alter table public.community_memberships drop constraint %I', legacy_constraint.conname);
+  end loop;
+end $$;
+
+create table if not exists public.community_join_requests (
+  id uuid primary key default gen_random_uuid(),
+  community_id uuid not null references public.communities(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  reviewed_by uuid references public.profiles(id) on delete set null,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (community_id, user_id)
+);
+
+create index if not exists idx_community_join_requests_community_status
+on public.community_join_requests(community_id, status, created_at asc);
+create index if not exists idx_community_join_requests_user
+on public.community_join_requests(user_id, status, created_at desc);
+
+alter table public.community_join_requests enable row level security;
+
+create or replace function public.is_community_manager(community_uuid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.community_memberships
+    where community_id = community_uuid
+      and user_id = auth.uid()
+      and role in ('owner', 'admin')
+  );
+$$;
+
+drop policy if exists "community_memberships_insert_manager" on public.community_memberships;
+create policy "community_memberships_insert_manager"
+on public.community_memberships
+for insert
+with check (public.is_community_manager(community_id));
+
+drop policy if exists "community_memberships_update_manager" on public.community_memberships;
+create policy "community_memberships_update_manager"
+on public.community_memberships
+for update
+using (public.is_community_manager(community_id))
+with check (public.is_community_manager(community_id));
+
+drop policy if exists "community_memberships_delete_manager" on public.community_memberships;
+create policy "community_memberships_delete_manager"
+on public.community_memberships
+for delete
+using (public.is_community_manager(community_id));
+
+drop policy if exists "community_join_requests_select_own_or_manager" on public.community_join_requests;
+create policy "community_join_requests_select_own_or_manager"
+on public.community_join_requests
+for select
+using (auth.uid() = user_id or public.is_community_manager(community_id));
+
+drop policy if exists "community_join_requests_insert_own" on public.community_join_requests;
+create policy "community_join_requests_insert_own"
+on public.community_join_requests
+for insert
+with check (
+  auth.uid() = user_id
+  and status = 'pending'
+);
+
+drop policy if exists "community_join_requests_update_manager" on public.community_join_requests;
+create policy "community_join_requests_update_manager"
+on public.community_join_requests
+for update
+using (public.is_community_manager(community_id))
+with check (public.is_community_manager(community_id));
+
+drop policy if exists "community_join_requests_update_own_pending" on public.community_join_requests;
+create policy "community_join_requests_update_own_pending"
+on public.community_join_requests
+for update
+using (auth.uid() = user_id)
+with check (
+  auth.uid() = user_id
+  and status = 'pending'
+);
+
+drop policy if exists "community_join_requests_delete_own" on public.community_join_requests;
+create policy "community_join_requests_delete_own"
+on public.community_join_requests
+for delete
+using (auth.uid() = user_id);
+
+-- Descobrir: vitrine de artistas iniciantes
+create table if not exists public.rising_artists (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references public.profiles(id) on delete cascade,
+  stage_name text not null check (char_length(stage_name) between 2 and 120),
+  bio text not null default '' check (char_length(bio) <= 500),
+  genre text not null default '' check (char_length(genre) <= 80),
+  city text not null default '' check (char_length(city) <= 80),
+  is_band boolean not null default false,
+  spotify_url text,
+  soundcloud_url text,
+  instagram_url text,
+  cover_url text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.rising_artist_supports (
+  artist_id uuid not null references public.rising_artists(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (artist_id, user_id)
+);
+
+create index if not exists idx_rising_artists_active_created_at
+on public.rising_artists(is_active, created_at desc);
+create index if not exists idx_rising_artists_genre
+on public.rising_artists(genre);
+create index if not exists idx_rising_artist_supports_artist
+on public.rising_artist_supports(artist_id);
+create index if not exists idx_rising_artist_supports_user
+on public.rising_artist_supports(user_id);
+
+alter table public.rising_artists enable row level security;
+alter table public.rising_artist_supports enable row level security;
+
+drop policy if exists "rising_artists_select_all" on public.rising_artists;
+create policy "rising_artists_select_all"
+on public.rising_artists
+for select
+using (is_active = true or auth.uid() = user_id);
+
+drop policy if exists "rising_artists_insert_own" on public.rising_artists;
+create policy "rising_artists_insert_own"
+on public.rising_artists
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "rising_artists_update_own" on public.rising_artists;
+create policy "rising_artists_update_own"
+on public.rising_artists
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "rising_artists_delete_own" on public.rising_artists;
+create policy "rising_artists_delete_own"
+on public.rising_artists
+for delete
+using (auth.uid() = user_id);
+
+drop policy if exists "rising_artist_supports_select_all" on public.rising_artist_supports;
+create policy "rising_artist_supports_select_all"
+on public.rising_artist_supports
+for select
+using (true);
+
+drop policy if exists "rising_artist_supports_insert_own" on public.rising_artist_supports;
+create policy "rising_artist_supports_insert_own"
+on public.rising_artist_supports
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "rising_artist_supports_delete_own" on public.rising_artist_supports;
+create policy "rising_artist_supports_delete_own"
+on public.rising_artist_supports
+for delete
+using (auth.uid() = user_id);

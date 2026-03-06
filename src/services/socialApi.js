@@ -157,6 +157,29 @@ function normalizeThemeColor(value) {
   return '#3b82f6'
 }
 
+const COMMUNITY_VISIBILITY_OPTIONS = new Set(['public', 'private'])
+const COMMUNITY_JOIN_REQUEST_STATUS = new Set(['pending', 'approved', 'rejected'])
+const COMMUNITY_MEMBER_ROLES = new Set(['owner', 'admin', 'moderator', 'member'])
+
+function normalizeCommunityVisibility(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  return COMMUNITY_VISIBILITY_OPTIONS.has(raw) ? raw : 'public'
+}
+
+function normalizeCommunityJoinRequestStatus(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  return COMMUNITY_JOIN_REQUEST_STATUS.has(raw) ? raw : ''
+}
+
+function normalizeCommunityRole(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  return COMMUNITY_MEMBER_ROLES.has(raw) ? raw : 'member'
+}
+
+function isCommunityManagerRole(role) {
+  return role === 'owner' || role === 'admin'
+}
+
 function directSetupError() {
   return new Error(
     'Tabelas de direct nao encontradas. Rode novamente supabase/schema.sql para ativar mensagens privadas.',
@@ -179,6 +202,10 @@ function spotifyCapsuleSetupError() {
   return new Error('Tabelas da capsula Spotify nao encontradas. Rode novamente supabase/schema.sql.')
 }
 
+function risingArtistsSetupError() {
+  return new Error('Tabelas de artistas em ascensao nao encontradas. Rode novamente supabase/schema.sql.')
+}
+
 function isMissingDirectRelation(error) {
   return (
     isMissingRelationError(error, 'direct_threads') ||
@@ -192,14 +219,20 @@ function isMissingStoriesRelation(error) {
 }
 
 function isMissingCommunityRelation(error) {
-  return isMissingRelationError(error, 'communities') || isMissingRelationError(error, 'community_memberships')
+  return (
+    isMissingRelationError(error, 'communities') ||
+    isMissingRelationError(error, 'community_memberships') ||
+    isMissingRelationError(error, 'community_join_requests')
+  )
 }
 
 function isMissingCommunityVisualColumns(error) {
   return (
     isMissingColumnError(error, 'genre') ||
     isMissingColumnError(error, 'avatar_url') ||
-    isMissingColumnError(error, 'cover_url')
+    isMissingColumnError(error, 'cover_url') ||
+    isMissingColumnError(error, 'visibility') ||
+    isMissingColumnError(error, 'requires_approval')
   )
 }
 
@@ -209,6 +242,13 @@ function isMissingPlaylistRelation(error) {
 
 function isMissingSpotifyCapsuleRelation(error) {
   return isMissingRelationError(error, 'spotify_connections') || isMissingRelationError(error, 'spotify_capsule_snapshots')
+}
+
+function isMissingRisingArtistsRelation(error) {
+  return (
+    isMissingRelationError(error, 'rising_artists') ||
+    isMissingRelationError(error, 'rising_artist_supports')
+  )
 }
 
 const FEED_POST_SELECT = `
@@ -753,7 +793,257 @@ export async function toggleFollowUser({ followerId, followingId }) {
   }
 }
 
-function mapCommunityRow(row, members = 0, joined = false) {
+export async function fetchRisingArtists({ userId = '', limit = 60, genre = '', query = '' } = {}) {
+  const client = requireSupabase()
+  const safeLimit = Math.max(1, Math.min(120, Number(limit) || 60))
+  const cleanGenre = String(genre || '').trim()
+  const cleanQuery = String(query || '')
+    .trim()
+    .replace(/[(),]/g, ' ')
+    .slice(0, 80)
+
+  let request = client
+    .from('rising_artists')
+    .select(
+      `
+      id,
+      user_id,
+      stage_name,
+      bio,
+      genre,
+      city,
+      is_band,
+      spotify_url,
+      soundcloud_url,
+      instagram_url,
+      cover_url,
+      is_active,
+      created_at,
+      updated_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+    .limit(safeLimit)
+
+  if (cleanGenre) {
+    request = request.ilike('genre', cleanGenre)
+  }
+
+  if (cleanQuery) {
+    request = request.or(`stage_name.ilike.%${cleanQuery}%,bio.ilike.%${cleanQuery}%,genre.ilike.%${cleanQuery}%,city.ilike.%${cleanQuery}%`)
+  }
+
+  const { data: artistRows, error: artistsError } = await request
+
+  if (artistsError) {
+    if (isMissingRisingArtistsRelation(artistsError)) {
+      return []
+    }
+    throw artistsError
+  }
+
+  const rows = artistRows || []
+  if (!rows.length) {
+    return []
+  }
+
+  const artistIds = rows.map((row) => row.id)
+  const { data: supportRows, error: supportsError } = await client
+    .from('rising_artist_supports')
+    .select('artist_id, user_id')
+    .in('artist_id', artistIds)
+
+  if (supportsError) {
+    if (isMissingRisingArtistsRelation(supportsError)) {
+      return rows.map((row) => mapRisingArtistRow(row, 0, false))
+    }
+    throw supportsError
+  }
+
+  const supportCountByArtist = new Map()
+  const supportedByViewer = new Set()
+
+  for (const row of supportRows || []) {
+    supportCountByArtist.set(row.artist_id, (supportCountByArtist.get(row.artist_id) || 0) + 1)
+    if (userId && row.user_id === userId) {
+      supportedByViewer.add(row.artist_id)
+    }
+  }
+
+  return rows
+    .map((row) => mapRisingArtistRow(row, supportCountByArtist.get(row.id) || 0, supportedByViewer.has(row.id)))
+    .sort((a, b) => {
+      const diff = Number(b.supports || 0) - Number(a.supports || 0)
+      if (diff !== 0) {
+        return diff
+      }
+      return new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
+    })
+}
+
+export async function upsertRisingArtist({
+  userId,
+  stageName,
+  bio = '',
+  genre = '',
+  city = '',
+  isBand = false,
+  spotifyUrl = '',
+  soundcloudUrl = '',
+  instagramUrl = '',
+  coverFile = null,
+  coverUrl = '',
+  isActive = true,
+}) {
+  const client = requireSupabase()
+  const cleanStageName = String(stageName || '').trim()
+
+  if (cleanStageName.length < 2) {
+    throw new Error('Nome artistico precisa ter pelo menos 2 caracteres.')
+  }
+
+  let cleanCoverUrl = String(coverUrl || '').trim()
+  if (coverFile) {
+    const uploadedCover = await uploadMedia(userId, coverFile, 'rising-artists/cover')
+    if (!uploadedCover || uploadedCover.type !== 'image') {
+      throw new Error('A capa precisa ser uma imagem valida.')
+    }
+    cleanCoverUrl = uploadedCover.url
+  }
+
+  const payload = {
+    user_id: userId,
+    stage_name: cleanStageName.slice(0, 120),
+    bio: String(bio || '').trim().slice(0, 500),
+    genre: String(genre || '').trim().slice(0, 80),
+    city: String(city || '').trim().slice(0, 80),
+    is_band: Boolean(isBand),
+    spotify_url: String(spotifyUrl || '').trim().slice(0, 500) || null,
+    soundcloud_url: String(soundcloudUrl || '').trim().slice(0, 500) || null,
+    instagram_url: String(instagramUrl || '').trim().slice(0, 500) || null,
+    cover_url: cleanCoverUrl || null,
+    is_active: Boolean(isActive),
+    updated_at: new Date().toISOString(),
+  }
+
+  const { data: row, error } = await client
+    .from('rising_artists')
+    .upsert(payload, { onConflict: 'user_id' })
+    .select(
+      `
+      id,
+      user_id,
+      stage_name,
+      bio,
+      genre,
+      city,
+      is_band,
+      spotify_url,
+      soundcloud_url,
+      instagram_url,
+      cover_url,
+      is_active,
+      created_at,
+      updated_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .single()
+
+  if (error) {
+    if (isMissingRisingArtistsRelation(error)) {
+      throw risingArtistsSetupError()
+    }
+    throw error
+  }
+
+  const supports = await countByField('rising_artist_supports', 'artist_id', row.id, { fallbackZeroOnMissing: true })
+  return mapRisingArtistRow(row, supports, false)
+}
+
+export async function toggleRisingArtistSupport({ artistId, userId }) {
+  const client = requireSupabase()
+
+  const { data: artistRow, error: artistError } = await client
+    .from('rising_artists')
+    .select('id, user_id, is_active')
+    .eq('id', artistId)
+    .maybeSingle()
+
+  if (artistError) {
+    if (isMissingRisingArtistsRelation(artistError)) {
+      throw risingArtistsSetupError()
+    }
+    throw artistError
+  }
+
+  if (!artistRow || artistRow.is_active === false) {
+    throw new Error('Artista nao encontrado.')
+  }
+
+  if (artistRow.user_id === userId) {
+    const ownCount = await countByField('rising_artist_supports', 'artist_id', artistId, { fallbackZeroOnMissing: true })
+    return { active: false, count: ownCount }
+  }
+
+  const { data: existing, error: existingError } = await client
+    .from('rising_artist_supports')
+    .select('artist_id, user_id')
+    .eq('artist_id', artistId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (existingError) {
+    if (isMissingRisingArtistsRelation(existingError)) {
+      throw risingArtistsSetupError()
+    }
+    throw existingError
+  }
+
+  if (existing) {
+    const { error: deleteError } = await client
+      .from('rising_artist_supports')
+      .delete()
+      .eq('artist_id', artistId)
+      .eq('user_id', userId)
+
+    if (deleteError) {
+      if (isMissingRisingArtistsRelation(deleteError)) {
+        throw risingArtistsSetupError()
+      }
+      throw deleteError
+    }
+  } else {
+    const { error: insertError } = await client.from('rising_artist_supports').insert({
+      artist_id: artistId,
+      user_id: userId,
+    })
+
+    if (insertError) {
+      if (isMissingRisingArtistsRelation(insertError)) {
+        throw risingArtistsSetupError()
+      }
+      throw insertError
+    }
+  }
+
+  const count = await countByField('rising_artist_supports', 'artist_id', artistId, { fallbackZeroOnMissing: true })
+  return { active: !existing, count }
+}
+
+function mapCommunityRow(row, members = 0, joined = false, myRole = '', joinRequestStatus = '') {
   return {
     id: row.id,
     name: row.name,
@@ -763,11 +1053,15 @@ function mapCommunityRow(row, members = 0, joined = false) {
     genre: row.genre || '',
     avatarUrl: row.avatar_url || '',
     coverUrl: row.cover_url || '',
+    visibility: normalizeCommunityVisibility(row.visibility),
+    requiresApproval: Boolean(row.requires_approval),
     creatorId: row.creator_id,
     creatorName: safeProfileName(row.profiles),
     creatorHandle: safeHandle(row.profiles),
     members,
     joined,
+    myRole: joined ? normalizeCommunityRole(myRole || 'member') : '',
+    joinRequestStatus: joined ? '' : normalizeCommunityJoinRequestStatus(joinRequestStatus),
     createdAt: row.created_at,
   }
 }
@@ -833,6 +1127,35 @@ function mapSpotifyCapsuleSnapshot(row) {
   }
 }
 
+function mapRisingArtistRow(row, supports = 0, supported = false) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    stageName: row.stage_name || safeProfileName(row.profiles),
+    bio: row.bio || '',
+    genre: row.genre || '',
+    city: row.city || '',
+    isBand: Boolean(row.is_band),
+    spotifyUrl: row.spotify_url || '',
+    soundcloudUrl: row.soundcloud_url || '',
+    instagramUrl: row.instagram_url || '',
+    coverUrl: row.cover_url || '',
+    isActive: row.is_active !== false,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    supports: Number(supports || 0),
+    supported: Boolean(supported),
+    user: row.profiles
+      ? {
+          id: row.profiles.id || row.user_id,
+          name: safeProfileName(row.profiles),
+          handle: safeHandle(row.profiles),
+          avatarUrl: safeAvatar(row.profiles),
+        }
+      : null,
+  }
+}
+
 async function countCommunityMembers(communityId) {
   const client = requireSupabase()
 
@@ -868,6 +1191,8 @@ export async function fetchCommunities({ userId = '', limit = 40 }) {
       genre,
       avatar_url,
       cover_url,
+      visibility,
+      requires_approval,
       created_at,
       profiles:creator_id (
         id,
@@ -922,32 +1247,68 @@ export async function fetchCommunities({ userId = '', limit = 40 }) {
   const communityIds = rows.map((row) => row.id)
   const { data: membershipRows, error: membershipsError } = await client
     .from('community_memberships')
-    .select('community_id, user_id')
+    .select('community_id, user_id, role')
     .in('community_id', communityIds)
 
   if (membershipsError) {
     if (isMissingCommunityRelation(membershipsError)) {
-      return rows.map((row) => mapCommunityRow(row, 0, false))
+      return rows.map((row) => mapCommunityRow(row, 0, false, '', ''))
     }
     throw membershipsError
   }
 
   const membersCountByCommunity = new Map()
   const joinedSet = new Set()
+  const roleByCommunity = new Map()
   for (const row of membershipRows || []) {
     membersCountByCommunity.set(row.community_id, (membersCountByCommunity.get(row.community_id) || 0) + 1)
     if (userId && row.user_id === userId) {
       joinedSet.add(row.community_id)
+      roleByCommunity.set(row.community_id, normalizeCommunityRole(row.role))
     }
   }
 
-  return rows.map((row) => mapCommunityRow(row, membersCountByCommunity.get(row.id) || 0, joinedSet.has(row.id)))
+  const requestStatusByCommunity = new Map()
+  if (userId) {
+    const { data: joinRequestRows, error: joinRequestsError } = await client
+      .from('community_join_requests')
+      .select('community_id, status')
+      .eq('user_id', userId)
+      .in('community_id', communityIds)
+
+    if (joinRequestsError && !isMissingCommunityRelation(joinRequestsError)) {
+      throw joinRequestsError
+    }
+
+    for (const row of joinRequestRows || []) {
+      requestStatusByCommunity.set(row.community_id, normalizeCommunityJoinRequestStatus(row.status))
+    }
+  }
+
+  return rows.map((row) =>
+    mapCommunityRow(
+      row,
+      membersCountByCommunity.get(row.id) || 0,
+      joinedSet.has(row.id),
+      roleByCommunity.get(row.id) || '',
+      requestStatusByCommunity.get(row.id) || '',
+    ),
+  )
 }
 
-export async function createCommunity({ userId, name, description = '', themeColor = '#3b82f6' }) {
+export async function createCommunity({
+  userId,
+  name,
+  description = '',
+  themeColor = '#3b82f6',
+  visibility = 'public',
+  requiresApproval = false,
+}) {
   const client = requireSupabase()
   const cleanName = String(name || '').trim()
   const cleanDescription = String(description || '').trim().slice(0, 500)
+  const normalizedVisibility = normalizeCommunityVisibility(visibility)
+  const normalizedRequiresApproval = Boolean(requiresApproval)
 
   if (cleanName.length < 3) {
     throw new Error('Nome da comunidade precisa ter ao menos 3 caracteres.')
@@ -968,6 +1329,8 @@ export async function createCommunity({ userId, name, description = '', themeCol
         slug,
         description: cleanDescription,
         theme_color: normalizeThemeColor(themeColor),
+        visibility: normalizedVisibility,
+        requires_approval: normalizedRequiresApproval,
       })
       .select(
         `
@@ -977,6 +1340,8 @@ export async function createCommunity({ userId, name, description = '', themeCol
         slug,
         description,
         theme_color,
+        visibility,
+        requires_approval,
         created_at,
         profiles:creator_id (
           id,
@@ -991,6 +1356,47 @@ export async function createCommunity({ userId, name, description = '', themeCol
     if (!error) {
       insertedRow = data
       break
+    }
+
+    if (isMissingColumnError(error, 'visibility') || isMissingColumnError(error, 'requires_approval')) {
+      const legacyInsert = await client
+        .from('communities')
+        .insert({
+          creator_id: userId,
+          name: cleanName,
+          slug,
+          description: cleanDescription,
+          theme_color: normalizeThemeColor(themeColor),
+        })
+        .select(
+          `
+          id,
+          creator_id,
+          name,
+          slug,
+          description,
+          theme_color,
+          created_at,
+          profiles:creator_id (
+            id,
+            name,
+            handle,
+            avatar_url
+          )
+        `,
+        )
+        .single()
+
+      if (!legacyInsert.error) {
+        insertedRow = legacyInsert.data
+        break
+      }
+
+      if (legacyInsert.error?.code === '23505') {
+        continue
+      }
+
+      throw legacyInsert.error
     }
 
     if (isMissingCommunityRelation(error)) {
@@ -1021,7 +1427,7 @@ export async function createCommunity({ userId, name, description = '', themeCol
     throw ownerError
   }
 
-  return mapCommunityRow(insertedRow, 1, true)
+  return mapCommunityRow(insertedRow, 1, true, 'owner', '')
 }
 
 export async function updateCommunity({
@@ -1035,6 +1441,8 @@ export async function updateCommunity({
   coverFile = null,
   avatarUrl = '',
   coverUrl = '',
+  visibility = 'public',
+  requiresApproval = false,
 }) {
   const client = requireSupabase()
   const cleanName = String(name || '').trim()
@@ -1042,6 +1450,8 @@ export async function updateCommunity({
   const cleanGenre = String(genre || '').trim().slice(0, 80)
   let cleanAvatarUrl = String(avatarUrl || '').trim()
   let cleanCoverUrl = String(coverUrl || '').trim()
+  const normalizedVisibility = normalizeCommunityVisibility(visibility)
+  const normalizedRequiresApproval = Boolean(requiresApproval)
 
   if (cleanName.length < 3) {
     throw new Error('Nome da comunidade precisa ter ao menos 3 caracteres.')
@@ -1072,6 +1482,8 @@ export async function updateCommunity({
       genre: cleanGenre || null,
       avatar_url: cleanAvatarUrl || null,
       cover_url: cleanCoverUrl || null,
+      visibility: normalizedVisibility,
+      requires_approval: normalizedRequiresApproval,
     })
     .eq('id', communityId)
     .eq('creator_id', userId)
@@ -1086,6 +1498,8 @@ export async function updateCommunity({
       genre,
       avatar_url,
       cover_url,
+      visibility,
+      requires_approval,
       created_at,
       profiles:creator_id (
         id,
@@ -1137,7 +1551,7 @@ export async function updateCommunity({
     throw error
   }
 
-  return mapCommunityRow(data, 0, true)
+  return mapCommunityRow(data, 0, true, 'owner', '')
 }
 
 export async function toggleCommunityMembership({ communityId, userId }) {
@@ -1161,6 +1575,8 @@ export async function toggleCommunityMembership({ communityId, userId }) {
     return {
       joined: true,
       members: await countCommunityMembers(communityId),
+      myRole: 'owner',
+      joinRequestStatus: '',
     }
   }
 
@@ -1196,6 +1612,369 @@ export async function toggleCommunityMembership({ communityId, userId }) {
   return {
     joined: !existing,
     members,
+    myRole: existing ? '' : 'member',
+    joinRequestStatus: '',
+  }
+}
+
+export async function requestCommunityJoin({ communityId, userId }) {
+  const client = requireSupabase()
+
+  const { data: existingMembership, error: membershipError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id')
+    .eq('community_id', communityId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (membershipError) {
+    if (isMissingCommunityRelation(membershipError)) {
+      throw communitiesSetupError()
+    }
+    throw membershipError
+  }
+
+  if (existingMembership) {
+    return {
+      joined: true,
+      status: 'approved',
+      members: await countCommunityMembers(communityId),
+    }
+  }
+
+  const { data: existingRequest, error: existingRequestError } = await client
+    .from('community_join_requests')
+    .select('id, status')
+    .eq('community_id', communityId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (existingRequestError) {
+    if (isMissingCommunityRelation(existingRequestError)) {
+      throw communitiesSetupError()
+    }
+    throw existingRequestError
+  }
+
+  if (existingRequest?.status === 'pending') {
+    return {
+      joined: false,
+      status: 'pending',
+    }
+  }
+
+  const payload = {
+    community_id: communityId,
+    user_id: userId,
+    status: 'pending',
+    reviewed_at: null,
+    reviewed_by: null,
+  }
+
+  const { error: upsertError } = await client
+    .from('community_join_requests')
+    .upsert(payload, { onConflict: 'community_id,user_id' })
+
+  if (upsertError) {
+    if (isMissingCommunityRelation(upsertError)) {
+      throw communitiesSetupError()
+    }
+    throw upsertError
+  }
+
+  return {
+    joined: false,
+    status: 'pending',
+  }
+}
+
+export async function fetchCommunityMembers({ communityId }) {
+  const client = requireSupabase()
+
+  const { data: rows, error } = await client
+    .from('community_memberships')
+    .select(
+      `
+      community_id,
+      user_id,
+      role,
+      created_at,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('community_id', communityId)
+
+  if (error) {
+    if (isMissingCommunityRelation(error)) {
+      return []
+    }
+    throw error
+  }
+
+  const roleWeight = { owner: 0, admin: 1, moderator: 2, member: 3 }
+
+  return (rows || [])
+    .map((row) => ({
+      communityId: row.community_id,
+      userId: row.user_id,
+      role: normalizeCommunityRole(row.role),
+      createdAt: row.created_at || null,
+      user: {
+        id: row.profiles?.id || row.user_id,
+        name: safeProfileName(row.profiles),
+        handle: safeHandle(row.profiles),
+        avatarUrl: safeAvatar(row.profiles),
+      },
+    }))
+    .sort((a, b) => {
+      const diff = (roleWeight[a.role] ?? 99) - (roleWeight[b.role] ?? 99)
+      if (diff !== 0) {
+        return diff
+      }
+      return a.user.name.localeCompare(b.user.name)
+    })
+}
+
+export async function updateCommunityMemberRole({
+  communityId,
+  actorUserId,
+  targetUserId,
+  role,
+}) {
+  const client = requireSupabase()
+  const nextRole = normalizeCommunityRole(role)
+
+  if (nextRole === 'owner') {
+    throw new Error('Transferencia de ownership nao suportada por este fluxo.')
+  }
+
+  const { data: actorMembership, error: actorError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id, role')
+    .eq('community_id', communityId)
+    .eq('user_id', actorUserId)
+    .maybeSingle()
+
+  if (actorError) {
+    if (isMissingCommunityRelation(actorError)) {
+      throw communitiesSetupError()
+    }
+    throw actorError
+  }
+
+  const actorRole = normalizeCommunityRole(actorMembership?.role || '')
+  if (!isCommunityManagerRole(actorRole)) {
+    throw new Error('Sem permissao para alterar cargos nesta comunidade.')
+  }
+
+  const { data: targetMembership, error: targetError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id, role')
+    .eq('community_id', communityId)
+    .eq('user_id', targetUserId)
+    .maybeSingle()
+
+  if (targetError) {
+    if (isMissingCommunityRelation(targetError)) {
+      throw communitiesSetupError()
+    }
+    throw targetError
+  }
+
+  if (!targetMembership) {
+    throw new Error('Membro nao encontrado nesta comunidade.')
+  }
+
+  const targetRole = normalizeCommunityRole(targetMembership.role)
+  if (targetRole === 'owner') {
+    throw new Error('O dono da comunidade nao pode ser alterado aqui.')
+  }
+
+  if (actorRole !== 'owner' && (targetRole === 'admin' || nextRole === 'admin')) {
+    throw new Error('Apenas o owner pode promover/rebaixar administradores.')
+  }
+
+  const { error: updateError } = await client
+    .from('community_memberships')
+    .update({ role: nextRole })
+    .eq('community_id', communityId)
+    .eq('user_id', targetUserId)
+
+  if (updateError) {
+    if (isMissingCommunityRelation(updateError)) {
+      throw communitiesSetupError()
+    }
+    throw updateError
+  }
+
+  return { role: nextRole }
+}
+
+export async function fetchCommunityJoinRequests({ communityId, userId }) {
+  const client = requireSupabase()
+
+  const { data: actorMembership, error: actorError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id, role')
+    .eq('community_id', communityId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (actorError) {
+    if (isMissingCommunityRelation(actorError)) {
+      throw communitiesSetupError()
+    }
+    throw actorError
+  }
+
+  const actorRole = normalizeCommunityRole(actorMembership?.role || '')
+  if (!isCommunityManagerRole(actorRole)) {
+    return []
+  }
+
+  const { data: rows, error } = await client
+    .from('community_join_requests')
+    .select(
+      `
+      id,
+      community_id,
+      user_id,
+      status,
+      created_at,
+      reviewed_at,
+      reviewed_by,
+      profiles:user_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .eq('community_id', communityId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    if (isMissingCommunityRelation(error)) {
+      return []
+    }
+    throw error
+  }
+
+  return (rows || []).map((row) => ({
+    id: row.id,
+    communityId: row.community_id,
+    userId: row.user_id,
+    status: normalizeCommunityJoinRequestStatus(row.status) || 'pending',
+    createdAt: row.created_at || null,
+    reviewedAt: row.reviewed_at || null,
+    reviewedBy: row.reviewed_by || null,
+    user: {
+      id: row.profiles?.id || row.user_id,
+      name: safeProfileName(row.profiles),
+      handle: safeHandle(row.profiles),
+      avatarUrl: safeAvatar(row.profiles),
+    },
+  }))
+}
+
+export async function reviewCommunityJoinRequest({
+  requestId,
+  communityId,
+  reviewerUserId,
+  decision,
+}) {
+  const client = requireSupabase()
+  const normalizedDecision = normalizeCommunityJoinRequestStatus(decision)
+
+  if (normalizedDecision !== 'approved' && normalizedDecision !== 'rejected') {
+    throw new Error('Decisao invalida para solicitacao.')
+  }
+
+  const { data: actorMembership, error: actorError } = await client
+    .from('community_memberships')
+    .select('community_id, user_id, role')
+    .eq('community_id', communityId)
+    .eq('user_id', reviewerUserId)
+    .maybeSingle()
+
+  if (actorError) {
+    if (isMissingCommunityRelation(actorError)) {
+      throw communitiesSetupError()
+    }
+    throw actorError
+  }
+
+  const actorRole = normalizeCommunityRole(actorMembership?.role || '')
+  if (!isCommunityManagerRole(actorRole)) {
+    throw new Error('Sem permissao para revisar solicitacoes.')
+  }
+
+  const { data: requestRow, error: requestError } = await client
+    .from('community_join_requests')
+    .select('id, community_id, user_id, status')
+    .eq('id', requestId)
+    .eq('community_id', communityId)
+    .maybeSingle()
+
+  if (requestError) {
+    if (isMissingCommunityRelation(requestError)) {
+      throw communitiesSetupError()
+    }
+    throw requestError
+  }
+
+  if (!requestRow) {
+    throw new Error('Solicitacao nao encontrada.')
+  }
+
+  if (normalizedDecision === 'approved') {
+    const { error: insertMembershipError } = await client
+      .from('community_memberships')
+      .upsert(
+        {
+          community_id: communityId,
+          user_id: requestRow.user_id,
+          role: 'member',
+        },
+        { onConflict: 'community_id,user_id' },
+      )
+
+    if (insertMembershipError) {
+      if (isMissingCommunityRelation(insertMembershipError)) {
+        throw communitiesSetupError()
+      }
+      throw insertMembershipError
+    }
+  }
+
+  const { error: updateRequestError } = await client
+    .from('community_join_requests')
+    .update({
+      status: normalizedDecision,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: reviewerUserId,
+    })
+    .eq('id', requestId)
+    .eq('community_id', communityId)
+
+  if (updateRequestError) {
+    if (isMissingCommunityRelation(updateRequestError)) {
+      throw communitiesSetupError()
+    }
+    throw updateRequestError
+  }
+
+  return {
+    status: normalizedDecision,
+    members: await countCommunityMembers(communityId),
+    userId: requestRow.user_id,
   }
 }
 
