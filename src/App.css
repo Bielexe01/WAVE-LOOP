@@ -1467,6 +1467,16 @@
   justify-content: center;
 }
 
+.community-playlist-spotify-card {
+  margin-top: 0.08rem;
+  padding: 0.42rem;
+  border-radius: 0.74rem;
+}
+
+.community-playlist-spotify-card iframe {
+  min-height: 232px;
+}
+
 .spotify-capsule-board {
   margin-top: 0.86rem;
   border-radius: 0.92rem;
@@ -3151,6 +3161,10 @@
 
   .mode-card-actions-playlist > :last-child {
     grid-column: auto;
+  }
+
+  .community-playlist-spotify-card iframe {
+    min-height: 188px;
   }
 
   .trend-strip,
@@ -5767,6 +5781,18 @@
   background: #f3f4f6;
 }
 
+.profile-ig-grid-button {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.profile-ig-grid-button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}
+
 .profile-ig-grid-item img {
   width: 100%;
   height: 100%;
@@ -5820,6 +5846,84 @@
   font-size: 0.8rem;
 }
 
+.profile-post-viewer {
+  width: min(640px, 100%);
+  max-height: min(92vh, 860px);
+  overflow: auto;
+  border-radius: 1rem;
+  border: 1px solid var(--ig-border, #dbdbdb);
+  background: var(--ig-surface, #ffffff);
+  padding: 0.78rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.profile-post-viewer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.profile-post-viewer-media,
+.profile-post-viewer-fallback {
+  border-radius: 0.78rem;
+  border: 1px solid var(--ig-border, #dbdbdb);
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.profile-post-viewer-media img {
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  display: block;
+  background: #0b1220;
+}
+
+.profile-post-viewer-media audio {
+  width: 100%;
+}
+
+.profile-post-viewer-fallback {
+  min-height: 240px;
+  display: grid;
+  place-items: end start;
+  padding: 0.7rem;
+  background-size: cover;
+}
+
+.profile-post-viewer-fallback span {
+  color: #ffffff;
+  font-weight: 700;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.44);
+}
+
+.profile-post-viewer-text {
+  margin: 0;
+  color: var(--ig-text, #111111);
+  white-space: pre-wrap;
+}
+
+.profile-post-viewer-track {
+  margin: 0;
+  color: var(--ig-muted, #6b7280);
+  font-size: 0.84rem;
+}
+
+.profile-post-viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.56rem;
+  flex-wrap: wrap;
+}
+
+.profile-post-viewer-footer span {
+  color: var(--ig-muted, #6b7280);
+  font-size: 0.82rem;
+}
+
 @media (max-width: 760px) {
   .profile-ig {
     border-radius: 0.74rem;
@@ -5842,6 +5946,20 @@
 
   .profile-ig-actions .secondary-btn:last-child {
     grid-column: 1 / -1;
+  }
+
+  .profile-post-viewer {
+    width: min(100%, 100%);
+    max-height: calc(100vh - 1.2rem);
+    padding: 0.62rem;
+  }
+
+  .profile-post-viewer-media img {
+    max-height: 48vh;
+  }
+
+  .profile-post-viewer-fallback {
+    min-height: 180px;
   }
 }
 

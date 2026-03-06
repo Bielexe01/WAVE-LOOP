@@ -1290,6 +1290,10 @@ function App() {
   const [directThemeOpen, setDirectThemeOpen] = useState(false)
   const [directMobileBg, setDirectMobileBg] = useState(directMobileThemePresets[0].color)
   const [profileTab, setProfileTab] = useState('posts')
+  const [profilePostViewer, setProfilePostViewer] = useState({
+    open: false,
+    postId: '',
+  })
   const [stories, setStories] = useState([])
   const [loadingStories, setLoadingStories] = useState(false)
   const [storyComposerOpen, setStoryComposerOpen] = useState(false)
@@ -1541,6 +1545,22 @@ function App() {
   const ownProfileTrackPosts = useMemo(() => {
     return ownProfilePosts.filter((post) => post.track)
   }, [ownProfilePosts])
+
+  const profilePostsSource = useMemo(() => {
+    if (publicProfile) {
+      return publicProfile.posts || []
+    }
+
+    return ownProfilePosts
+  }, [ownProfilePosts, publicProfile])
+
+  const activeProfilePost = useMemo(() => {
+    if (!profilePostViewer.open || !profilePostViewer.postId) {
+      return null
+    }
+
+    return profilePostsSource.find((post) => post.id === profilePostViewer.postId) || null
+  }, [profilePostViewer.open, profilePostViewer.postId, profilePostsSource])
 
   const communityStats = useMemo(() => {
     const total = communities.length
@@ -2786,7 +2806,35 @@ function App() {
   const activateNav = useCallback((nextNav) => {
     setActiveNav(nextNav)
     setPublicProfile(null)
+    setProfilePostViewer({
+      open: false,
+      postId: '',
+    })
   }, [])
+
+  const openProfilePostViewer = useCallback((postId) => {
+    if (!postId) {
+      return
+    }
+
+    setProfilePostViewer({
+      open: true,
+      postId,
+    })
+  }, [])
+
+  const closeProfilePostViewer = useCallback(() => {
+    setProfilePostViewer({
+      open: false,
+      postId: '',
+    })
+  }, [])
+
+  useEffect(() => {
+    if (profilePostViewer.open && !activeProfilePost) {
+      closeProfilePostViewer()
+    }
+  }, [activeProfilePost, closeProfilePostViewer, profilePostViewer.open])
 
   const openDirectThread = useCallback(
     async (threadId, options = {}) => {
@@ -6644,47 +6692,93 @@ function App() {
                       <div className="community-playlist-grid">
                         {activeCommunityFeed
                           .filter((post) => post.type === 'playlist' && post.spotifyUrl)
-                          .map((post) => (
-                            <article key={`playlist-post-${post.id}`} className="community-post-card">
+                          .map((post) => {
+                            const spotifyData = parseSpotifyUrl(post.spotifyUrl)
+
+                            return (
+                              <article key={`playlist-post-${post.id}`} className="community-post-card">
+                                <header>
+                                  <strong>{post.title || 'Playlist da comunidade'}</strong>
+                                  <span>Playlist</span>
+                                </header>
+                                {post.text && <p>{post.text}</p>}
+                                {spotifyData?.embedUrl && (
+                                  <div className="spotify-card community-playlist-spotify-card">
+                                    <iframe
+                                      src={spotifyData.embedUrl}
+                                      title={`Playlist da comunidade ${post.id}`}
+                                      loading="lazy"
+                                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                                    />
+                                  </div>
+                                )}
+                                <div className="community-post-actions">
+                                  <a
+                                    href={spotifyData?.url || post.spotifyUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="secondary-btn mode-link-btn"
+                                  >
+                                    Ouvir
+                                  </a>
+                                  <button
+                                    type="button"
+                                    className={post.saved ? 'secondary-btn followed' : 'secondary-btn'}
+                                    onClick={() => toggleCommunityFeedSave(post.id)}
+                                  >
+                                    Salvar
+                                  </button>
+                                  <button type="button" className="secondary-btn" onClick={() => shareCommunityFeedPost(post.id)}>
+                                    Comentar/Compartilhar
+                                  </button>
+                                </div>
+                              </article>
+                            )
+                          })}
+
+                        {playlists.slice(0, 6).map((playlist) => {
+                          const spotifyData = parseSpotifyUrl(playlist.spotifyUrl)
+
+                          return (
+                            <article key={`community-playlist-lib-${playlist.id}`} className="community-post-card">
                               <header>
-                                <strong>{post.title || 'Playlist da comunidade'}</strong>
-                                <span>Playlist</span>
+                                <strong>{playlist.title}</strong>
+                                <span>@{normalizeHandle(playlist.creatorHandle || 'usuario')}</span>
                               </header>
-                              {post.text && <p>{post.text}</p>}
+                              <p>{playlist.description || 'Playlist compartilhada na comunidade.'}</p>
+                              {spotifyData?.embedUrl && (
+                                <div className="spotify-card community-playlist-spotify-card">
+                                  <iframe
+                                    src={spotifyData.embedUrl}
+                                    title={`Playlist ${playlist.id}`}
+                                    loading="lazy"
+                                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                                  />
+                                </div>
+                              )}
                               <div className="community-post-actions">
-                                <a href={post.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn mode-link-btn">
+                                <a
+                                  href={spotifyData?.url || playlist.spotifyUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="secondary-btn mode-link-btn"
+                                >
                                   Ouvir
                                 </a>
-                                <button type="button" className={post.saved ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => toggleCommunityFeedSave(post.id)}>
-                                  Salvar
+                                <button
+                                  type="button"
+                                  className={playlist.saved ? 'secondary-btn followed' : 'secondary-btn'}
+                                  onClick={() => togglePlaylistSave(playlist.id)}
+                                >
+                                  {playlist.saved ? 'Salva' : 'Salvar'}
                                 </button>
-                                <button type="button" className="secondary-btn" onClick={() => shareCommunityFeedPost(post.id)}>
-                                  Comentar/Compartilhar
+                                <button type="button" className="secondary-btn" onClick={() => applyPlaylistInComposer(playlist)}>
+                                  Postar no feed
                                 </button>
                               </div>
                             </article>
-                          ))}
-
-                        {playlists.slice(0, 6).map((playlist) => (
-                          <article key={`community-playlist-lib-${playlist.id}`} className="community-post-card">
-                            <header>
-                              <strong>{playlist.title}</strong>
-                              <span>@{normalizeHandle(playlist.creatorHandle || 'usuario')}</span>
-                            </header>
-                            <p>{playlist.description || 'Playlist compartilhada na comunidade.'}</p>
-                            <div className="community-post-actions">
-                              <a href={playlist.spotifyUrl} target="_blank" rel="noreferrer" className="secondary-btn mode-link-btn">
-                                Ouvir
-                              </a>
-                              <button type="button" className={playlist.saved ? 'secondary-btn followed' : 'secondary-btn'} onClick={() => togglePlaylistSave(playlist.id)}>
-                                {playlist.saved ? 'Salva' : 'Salvar'}
-                              </button>
-                              <button type="button" className="secondary-btn" onClick={() => applyPlaylistInComposer(playlist)}>
-                                Postar no feed
-                              </button>
-                            </div>
-                          </article>
-                        ))}
+                          )
+                        })}
                       </div>
                     </div>
                   )}
@@ -7095,7 +7189,13 @@ function App() {
                 <div className="profile-ig-grid">
                   {ownProfilePosts.length > 0 ? (
                     ownProfilePosts.slice(0, 12).map((post) => (
-                      <article key={`profile-grid-${post.id}`} className="profile-ig-grid-item">
+                      <button
+                        type="button"
+                        key={`profile-grid-${post.id}`}
+                        className="profile-ig-grid-item profile-ig-grid-button"
+                        onClick={() => openProfilePostViewer(post.id)}
+                        aria-label={`Abrir post de ${post.user.name}`}
+                      >
                         {post.media && post.media.type !== 'audio' ? (
                           <img src={post.media.url} alt={`Post de ${post.user.name}`} loading="lazy" />
                         ) : (
@@ -7106,7 +7206,7 @@ function App() {
                             <span>{post.track?.title || post.mood}</span>
                           </div>
                         )}
-                      </article>
+                      </button>
                     ))
                   ) : (
                     <p className="profile-ig-empty">Ainda nao existem publicacoes no seu perfil.</p>
@@ -8156,6 +8256,85 @@ function App() {
                   Usar link
                 </button>
               </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {profilePostViewer.open && activeProfilePost && (
+        <div className="modal-overlay" role="presentation" onClick={closeProfilePostViewer}>
+          <section
+            className="profile-post-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Visualizar post"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="profile-post-viewer-head">
+              <div className="post-user">
+                <div className="avatar">
+                  {activeProfilePost.user.avatarUrl ? (
+                    <img src={activeProfilePost.user.avatarUrl} alt={activeProfilePost.user.name} />
+                  ) : (
+                    initials(activeProfilePost.user.name)
+                  )}
+                </div>
+                <div>
+                  <strong>{activeProfilePost.user.name}</strong>
+                  <p>
+                    @{normalizeHandle(activeProfilePost.user.handle)} • {timeAgo(activeProfilePost.createdAt)}
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="secondary-btn" onClick={closeProfilePostViewer}>
+                Fechar
+              </button>
+            </header>
+
+            {activeProfilePost.media ? (
+              <div className="profile-post-viewer-media">
+                {activeProfilePost.media.type === 'audio' ? (
+                  <audio controls src={activeProfilePost.media.url} preload="metadata" />
+                ) : (
+                  <img src={activeProfilePost.media.url} alt={`Post de ${activeProfilePost.user.name}`} loading="lazy" />
+                )}
+              </div>
+            ) : (
+              <div
+                className="profile-post-viewer-fallback"
+                style={{
+                  backgroundImage: gradientFromSeed(
+                    `${activeProfilePost.id}-${activeProfilePost.track?.title || activeProfilePost.mood}`,
+                  ),
+                }}
+              >
+                <span>{activeProfilePost.track?.title || activeProfilePost.mood}</span>
+              </div>
+            )}
+
+            <p className="profile-post-viewer-text">{activeProfilePost.text}</p>
+
+            {activeProfilePost.track && (
+              <p className="profile-post-viewer-track">
+                {activeProfilePost.track.title} - {activeProfilePost.track.artist}
+              </p>
+            )}
+
+            <div className="profile-post-viewer-footer">
+              <span>
+                Like {compact(activeProfilePost.likes)} • Comentarios {compact(activeProfilePost.comments.length)} • Repost{' '}
+                {compact(activeProfilePost.reposts)}
+              </span>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => {
+                  closeProfilePostViewer()
+                  activateNav('Feed')
+                }}
+              >
+                Abrir no feed
+              </button>
             </div>
           </section>
         </div>
