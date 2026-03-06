@@ -311,6 +311,18 @@ export async function getSession() {
   const { data, error } = await client.auth.getSession()
 
   if (error) {
+    const message = String(error.message || '').toLowerCase()
+    const isInvalidRefreshToken =
+      message.includes('invalid refresh token') ||
+      message.includes('refresh token not found') ||
+      message.includes('refresh_token_not_found')
+
+    if (isInvalidRefreshToken) {
+      // Limpa sessao local corrompida/expirada sem bloquear o app.
+      await client.auth.signOut({ scope: 'local' }).catch(() => {})
+      return null
+    }
+
     throw error
   }
 

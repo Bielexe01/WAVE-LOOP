@@ -186,6 +186,10 @@ function parseSpotifyUrl(value) {
   }
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''))
+}
+
 function postMatchesQuery(post, query) {
   const haystack = [
     post.user?.name,
@@ -601,6 +605,86 @@ function capsulePeriodLabel(period) {
 
 function capsulePeriodRange(period) {
   return spotifyCapsulePeriods.find((item) => item.id === period)?.range || 'short_term'
+}
+
+function capsulePeriodStartTimestamp(period) {
+  const now = Date.now()
+
+  if (period === '4_weeks') {
+    return now - 28 * 24 * 60 * 60 * 1000
+  }
+
+  if (period === '6_months') {
+    return now - 183 * 24 * 60 * 60 * 1000
+  }
+
+  return null
+}
+
+async function fetchSpotifyRecentHistory(accessToken, period) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+  }
+
+  const periodStart = capsulePeriodStartTimestamp(period)
+  const maxPages = period === 'all_time' ? 12 : 8
+  let beforeCursor = ''
+  const allItems = []
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL('https://api.spotify.com/v1/me/player/recently-played')
+    url.searchParams.set('limit', '50')
+    if (beforeCursor) {
+      url.searchParams.set('before', beforeCursor)
+    }
+
+    const response = await fetch(url.toString(), { headers })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Falha ao carregar historico recente do Spotify.')
+    }
+
+    const items = Array.isArray(data.items) ? data.items : []
+    if (!items.length) {
+      break
+    }
+
+    allItems.push(...items)
+
+    const oldestPlayedAt = new Date(items[items.length - 1]?.played_at || '').getTime()
+    if (periodStart && Number.isFinite(oldestPlayedAt) && oldestPlayedAt < periodStart) {
+      break
+    }
+
+    const nextBefore = Number(data?.cursors?.before || 0)
+    if (!Number.isFinite(nextBefore) || nextBefore <= 0) {
+      break
+    }
+
+    beforeCursor = String(Math.floor(nextBefore - 1))
+  }
+
+  const periodFiltered = periodStart
+    ? allItems.filter((item) => {
+        const playedAt = new Date(item?.played_at || '').getTime()
+        return Number.isFinite(playedAt) && playedAt >= periodStart
+      })
+    : allItems
+
+  const seen = new Set()
+  const deduped = []
+  for (const item of periodFiltered) {
+    const trackId = item?.track?.id || item?.track?.uri || item?.track?.name || 'track'
+    const playedAt = item?.played_at || ''
+    const key = `${trackId}:${playedAt}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(item)
+  }
+
+  return deduped
 }
 
 function randomSpotifyPkceString(length = 96) {
@@ -1270,8 +1354,13 @@ function App() {
   }, [])
 
   const loadCommunities = useCallback(async (userId) => {
-    if (!isSupabaseConfigured || !userId) {
+    if (!isSupabaseConfigured) {
       setCommunities(buildLocalCommunityCards())
+      return
+    }
+
+    if (!userId) {
+      setCommunities([])
       return
     }
 
@@ -1281,6 +1370,7 @@ function App() {
       const nextCommunities = await fetchCommunities({ userId, limit: 48 })
       setCommunities(nextCommunities)
     } catch (error) {
+      setCommunities([])
       setErrorMessage(toMessage(error, 'Falha ao carregar comunidades.'))
     } finally {
       setLoadingCommunities(false)
@@ -1313,10 +1403,17 @@ function App() {
         return
       }
 
+      const remoteCommunityIds = communityIds.filter((communityId) => isUuid(communityId))
+      if (remoteCommunityIds.length === 0) {
+        setCommunityRankingsById({})
+        setLoadingCommunityRankings(false)
+        return
+      }
+
       setLoadingCommunityRankings(true)
       try {
         const rankingByCommunity = await fetchCommunitySpotifyLeaderboards({
-          communityIds,
+          communityIds: remoteCommunityIds,
           period,
           limit: 3,
         })
@@ -1490,11 +1587,9 @@ function App() {
 
       try {
         const accessToken = await ensureSpotifyAccessToken(userId)
-        const headers = {
-          Authorization: `Bearer ${accessToken}`,
-        }
+        const headers = { Authorization: `Bearer ${accessToken}` }
 
-        const [profileResponse, topTracksResponse, topArtistsResponse, recentResponse] = await Promise.all([
+        const [profileResponse, topTracksResponse, topArtistsResponse] = await Promise.all([
           fetch('https://api.spotify.com/v1/me', { headers }),
           fetch(
             `https://api.spotify.com/v1/me/top/tracks?time_range=${encodeURIComponent(capsulePeriodRange(period))}&limit=20`,
@@ -1504,14 +1599,12 @@ function App() {
             `https://api.spotify.com/v1/me/top/artists?time_range=${encodeURIComponent(capsulePeriodRange(period))}&limit=20`,
             { headers },
           ),
-          fetch('https://api.spotify.com/v1/me/player/recently-played?limit=50', { headers }),
         ])
 
-        const [profileData, tracksData, artistsData, recentData] = await Promise.all([
+        const [profileData, tracksData, artistsData] = await Promise.all([
           profileResponse.json().catch(() => ({})),
           topTracksResponse.json().catch(() => ({})),
           topArtistsResponse.json().catch(() => ({})),
-          recentResponse.json().catch(() => ({})),
         ])
 
         if (!profileResponse.ok) {
@@ -1526,9 +1619,7 @@ function App() {
           throw new Error(artistsData.error?.message || 'Falha ao carregar top artists do Spotify.')
         }
 
-        if (!recentResponse.ok) {
-          throw new Error(recentData.error?.message || 'Falha ao carregar historico recente do Spotify.')
-        }
+        const recentItems = await fetchSpotifyRecentHistory(accessToken, period)
 
         const topTracks = (tracksData.items || []).map((item) => ({
           id: item.id || '',
@@ -1549,10 +1640,9 @@ function App() {
           popularity: Number(item.popularity || 0),
         }))
 
-        const recentItems = recentData.items || []
         const recentMinutes = recentItems.reduce((acc, item) => acc + Number(item?.track?.duration_ms || 0), 0) / 60000
         const topMinutes = topTracks.reduce((acc, item) => acc + Number(item.durationMs || 0), 0) / 60000
-        const minutesEstimate = Math.max(0, Math.round(recentMinutes + topMinutes))
+        const minutesEstimate = Math.max(0, Math.round(recentMinutes || topMinutes))
         const recentPlays = recentItems.length
         const uniqueTracks = new Set(topTracks.map((item) => item.id).filter(Boolean)).size
         const uniqueArtists = new Set(topArtists.map((item) => item.id).filter(Boolean)).size
@@ -1560,9 +1650,13 @@ function App() {
           topTracks.length > 0
             ? topTracks.reduce((acc, item) => acc + Number(item.popularity || 0), 0) / topTracks.length
             : 0
+        const topTrackMomentum =
+          topTracks.length > 0
+            ? topTracks.slice(0, 10).reduce((acc, item, index) => acc + Math.max(6, 20 - index) + Number(item.popularity || 0) / 20, 0)
+            : 0
         const score = Math.max(
           0,
-          Math.round(uniqueTracks * 24 + uniqueArtists * 16 + recentPlays * 3 + averagePopularity * 2 + minutesEstimate / 12),
+          Math.round(minutesEstimate * 0.65 + recentPlays * 4 + uniqueTracks * 14 + uniqueArtists * 12 + averagePopularity + topTrackMomentum),
         )
 
         const syncedAt = new Date().toISOString()
@@ -1588,7 +1682,9 @@ function App() {
         ])
 
         await loadSpotifyCapsule(userId, period)
-        setStatusMessage(`Capsula Spotify sincronizada (${capsulePeriodLabel(period)}).`)
+        setStatusMessage(
+          `Capsula Spotify sincronizada (${capsulePeriodLabel(period)}): ${compact(recentPlays)} plays, ${compact(minutesEstimate)} min.`,
+        )
       } catch (error) {
         setErrorMessage(toMessage(error, 'Nao foi possivel sincronizar a capsula Spotify.'))
       } finally {
@@ -4474,11 +4570,11 @@ function App() {
                         <strong>{compact(spotifyCapsuleMine.score)}</strong>
                       </div>
                       <div>
-                        <span>Minutos</span>
+                        <span>Minutos (hist.)</span>
                         <strong>{compact(spotifyCapsuleMine.minutesEstimate)}</strong>
                       </div>
                       <div>
-                        <span>Recentes</span>
+                        <span>Plays periodo</span>
                         <strong>{compact(spotifyCapsuleMine.recentPlays)}</strong>
                       </div>
                     </div>
