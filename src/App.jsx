@@ -1209,6 +1209,10 @@ function App() {
     avatarUrl: '',
     coverUrl: '',
   })
+  const [communityAdminAvatarFile, setCommunityAdminAvatarFile] = useState(null)
+  const [communityAdminAvatarPreview, setCommunityAdminAvatarPreview] = useState('')
+  const [communityAdminCoverFile, setCommunityAdminCoverFile] = useState(null)
+  const [communityAdminCoverPreview, setCommunityAdminCoverPreview] = useState('')
   const [communityFeedById, setCommunityFeedById] = useState({})
   const [editingCommunityPostId, setEditingCommunityPostId] = useState('')
   const [communityPostEditDraft, setCommunityPostEditDraft] = useState({
@@ -1327,6 +1331,8 @@ function App() {
 
   const fileInputRef = useRef(null)
   const profileAvatarInputRef = useRef(null)
+  const communityAdminAvatarInputRef = useRef(null)
+  const communityAdminCoverInputRef = useRef(null)
   const likeBurstTimeoutRef = useRef(null)
   const directReplyTimeoutRef = useRef(null)
   const commentInputRefs = useRef({})
@@ -2580,6 +2586,14 @@ function App() {
         URL.revokeObjectURL(storyMediaPreview)
       }
 
+      if (communityAdminAvatarPreview) {
+        URL.revokeObjectURL(communityAdminAvatarPreview)
+      }
+
+      if (communityAdminCoverPreview) {
+        URL.revokeObjectURL(communityAdminCoverPreview)
+      }
+
       if (likeBurstTimeoutRef.current) {
         clearTimeout(likeBurstTimeoutRef.current)
       }
@@ -2592,7 +2606,7 @@ function App() {
         clearTimeout(storyAutoAdvanceRef.current)
       }
     }
-  }, [mediaPreview, profileAvatarPreview, storyMediaPreview])
+  }, [communityAdminAvatarPreview, communityAdminCoverPreview, mediaPreview, profileAvatarPreview, storyMediaPreview])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -4250,11 +4264,89 @@ function App() {
     setCommunityViewMode('list')
   }, [])
 
+  const clearCommunityAdminAvatarSelection = useCallback(() => {
+    if (communityAdminAvatarPreview) {
+      URL.revokeObjectURL(communityAdminAvatarPreview)
+    }
+
+    setCommunityAdminAvatarFile(null)
+    setCommunityAdminAvatarPreview('')
+
+    if (communityAdminAvatarInputRef.current) {
+      communityAdminAvatarInputRef.current.value = ''
+    }
+  }, [communityAdminAvatarPreview])
+
+  const clearCommunityAdminCoverSelection = useCallback(() => {
+    if (communityAdminCoverPreview) {
+      URL.revokeObjectURL(communityAdminCoverPreview)
+    }
+
+    setCommunityAdminCoverFile(null)
+    setCommunityAdminCoverPreview('')
+
+    if (communityAdminCoverInputRef.current) {
+      communityAdminCoverInputRef.current.value = ''
+    }
+  }, [communityAdminCoverPreview])
+
+  const onSelectCommunityAdminAvatar = useCallback(
+    (event) => {
+      const [file] = event.target.files || []
+
+      if (!file) {
+        clearCommunityAdminAvatarSelection()
+        return
+      }
+
+      if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+        setErrorMessage('Foto da comunidade precisa ser uma imagem.')
+        clearCommunityAdminAvatarSelection()
+        return
+      }
+
+      if (communityAdminAvatarPreview) {
+        URL.revokeObjectURL(communityAdminAvatarPreview)
+      }
+
+      setCommunityAdminAvatarFile(file)
+      setCommunityAdminAvatarPreview(URL.createObjectURL(file))
+    },
+    [clearCommunityAdminAvatarSelection, communityAdminAvatarPreview],
+  )
+
+  const onSelectCommunityAdminCover = useCallback(
+    (event) => {
+      const [file] = event.target.files || []
+
+      if (!file) {
+        clearCommunityAdminCoverSelection()
+        return
+      }
+
+      if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+        setErrorMessage('Capa da comunidade precisa ser uma imagem.')
+        clearCommunityAdminCoverSelection()
+        return
+      }
+
+      if (communityAdminCoverPreview) {
+        URL.revokeObjectURL(communityAdminCoverPreview)
+      }
+
+      setCommunityAdminCoverFile(file)
+      setCommunityAdminCoverPreview(URL.createObjectURL(file))
+    },
+    [clearCommunityAdminCoverSelection, communityAdminCoverPreview],
+  )
+
   const openCommunityAdminEditor = useCallback(() => {
     if (!selectedCommunityVisual || !isSelectedCommunityAdmin) {
       return
     }
 
+    clearCommunityAdminAvatarSelection()
+    clearCommunityAdminCoverSelection()
     setCommunityAdminDraft({
       name: selectedCommunityVisual.name || '',
       description: selectedCommunityVisual.description || '',
@@ -4264,11 +4356,18 @@ function App() {
       coverUrl: selectedCommunityVisual.coverUrl || '',
     })
     setCommunityAdminEditing(true)
-  }, [isSelectedCommunityAdmin, selectedCommunityVisual])
+  }, [
+    clearCommunityAdminAvatarSelection,
+    clearCommunityAdminCoverSelection,
+    isSelectedCommunityAdmin,
+    selectedCommunityVisual,
+  ])
 
   const cancelCommunityAdminEditor = useCallback(() => {
+    clearCommunityAdminAvatarSelection()
+    clearCommunityAdminCoverSelection()
     setCommunityAdminEditing(false)
-  }, [])
+  }, [clearCommunityAdminAvatarSelection, clearCommunityAdminCoverSelection])
 
   const saveCommunityAdminEditor = useCallback(
     async (event) => {
@@ -4283,8 +4382,8 @@ function App() {
       const description = communityAdminDraft.description.trim()
       const themeColor = communityAdminDraft.themeColor.trim() || '#3b82f6'
       const genre = communityAdminDraft.genre.trim()
-      const avatarUrl = communityAdminDraft.avatarUrl.trim()
-      const coverUrl = communityAdminDraft.coverUrl.trim()
+      let avatarUrl = communityAdminDraft.avatarUrl.trim()
+      let coverUrl = communityAdminDraft.coverUrl.trim()
 
       if (name.length < 3) {
         setErrorMessage('Nome da comunidade precisa ter ao menos 3 caracteres.')
@@ -4303,9 +4402,14 @@ function App() {
             description,
             themeColor,
             genre,
+            avatarFile: communityAdminAvatarFile,
+            coverFile: communityAdminCoverFile,
             avatarUrl,
             coverUrl,
           })
+
+          avatarUrl = updated.avatarUrl || avatarUrl
+          coverUrl = updated.coverUrl || coverUrl
 
           setCommunities((current) =>
             current.map((community) =>
@@ -4328,10 +4432,20 @@ function App() {
                     name,
                     description,
                     themeColor,
+                    genre,
+                    avatarUrl,
+                    coverUrl,
                   }
                 : community,
             ),
           )
+
+          if (communityAdminAvatarFile) {
+            avatarUrl = await readFileAsDataUrl(communityAdminAvatarFile)
+          }
+          if (communityAdminCoverFile) {
+            coverUrl = await readFileAsDataUrl(communityAdminCoverFile)
+          }
         }
 
         setCommunityMetaById((current) => ({
@@ -4347,6 +4461,8 @@ function App() {
           },
         }))
 
+        clearCommunityAdminAvatarSelection()
+        clearCommunityAdminCoverSelection()
         setCommunityAdminEditing(false)
         setStatusMessage('Comunidade atualizada.')
       } catch (error) {
@@ -4362,6 +4478,10 @@ function App() {
       communityAdminDraft.genre,
       communityAdminDraft.name,
       communityAdminDraft.themeColor,
+      communityAdminAvatarFile,
+      communityAdminCoverFile,
+      clearCommunityAdminAvatarSelection,
+      clearCommunityAdminCoverSelection,
       currentUser?.id,
       selectedCommunity,
     ],
@@ -5975,22 +6095,69 @@ function App() {
                             </option>
                           ))}
                         </select>
-                        <input
-                          type="text"
-                          value={communityAdminDraft.avatarUrl}
-                          onChange={(event) =>
-                            setCommunityAdminDraft((current) => ({ ...current, avatarUrl: event.target.value }))
-                          }
-                          placeholder="URL da foto da comunidade"
-                        />
-                        <input
-                          type="text"
-                          value={communityAdminDraft.coverUrl}
-                          onChange={(event) =>
-                            setCommunityAdminDraft((current) => ({ ...current, coverUrl: event.target.value }))
-                          }
-                          placeholder="URL da capa"
-                        />
+                      </div>
+                      <div className="community-admin-media-grid">
+                        <div className="community-admin-media-card">
+                          <p>Foto da comunidade</p>
+                          <div className="community-admin-avatar-preview">
+                            {communityAdminAvatarPreview ? (
+                              <img src={communityAdminAvatarPreview} alt="Preview da foto da comunidade" />
+                            ) : communityAdminDraft.avatarUrl ? (
+                              <img src={communityAdminDraft.avatarUrl} alt="Foto atual da comunidade" />
+                            ) : (
+                              <span>{initials(communityAdminDraft.name || selectedCommunity?.name || 'C')}</span>
+                            )}
+                          </div>
+                          <div className="community-admin-media-actions">
+                            <label className="file-pill" htmlFor="community-admin-avatar-input">
+                              Escolher foto
+                            </label>
+                            <input
+                              id="community-admin-avatar-input"
+                              ref={communityAdminAvatarInputRef}
+                              type="file"
+                              className="file-native"
+                              accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.avif,.heic,.heif"
+                              onChange={onSelectCommunityAdminAvatar}
+                            />
+                            {(communityAdminAvatarFile || communityAdminAvatarPreview) && (
+                              <button type="button" className="secondary-btn" onClick={clearCommunityAdminAvatarSelection}>
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="community-admin-media-card">
+                          <p>Capa da comunidade</p>
+                          <div className="community-admin-cover-preview">
+                            {communityAdminCoverPreview ? (
+                              <img src={communityAdminCoverPreview} alt="Preview da capa da comunidade" />
+                            ) : communityAdminDraft.coverUrl ? (
+                              <img src={communityAdminDraft.coverUrl} alt="Capa atual da comunidade" />
+                            ) : (
+                              <span>Sem capa</span>
+                            )}
+                          </div>
+                          <div className="community-admin-media-actions">
+                            <label className="file-pill" htmlFor="community-admin-cover-input">
+                              Escolher capa
+                            </label>
+                            <input
+                              id="community-admin-cover-input"
+                              ref={communityAdminCoverInputRef}
+                              type="file"
+                              className="file-native"
+                              accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.avif,.heic,.heif"
+                              onChange={onSelectCommunityAdminCover}
+                            />
+                            {(communityAdminCoverFile || communityAdminCoverPreview) && (
+                              <button type="button" className="secondary-btn" onClick={clearCommunityAdminCoverSelection}>
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                       <div className="community-inline-grid two">
                         <textarea

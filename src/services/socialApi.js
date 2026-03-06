@@ -1031,6 +1031,8 @@ export async function updateCommunity({
   description = '',
   themeColor = '#3b82f6',
   genre = '',
+  avatarFile = null,
+  coverFile = null,
   avatarUrl = '',
   coverUrl = '',
 }) {
@@ -1038,11 +1040,27 @@ export async function updateCommunity({
   const cleanName = String(name || '').trim()
   const cleanDescription = String(description || '').trim().slice(0, 500)
   const cleanGenre = String(genre || '').trim().slice(0, 80)
-  const cleanAvatarUrl = String(avatarUrl || '').trim()
-  const cleanCoverUrl = String(coverUrl || '').trim()
+  let cleanAvatarUrl = String(avatarUrl || '').trim()
+  let cleanCoverUrl = String(coverUrl || '').trim()
 
   if (cleanName.length < 3) {
     throw new Error('Nome da comunidade precisa ter ao menos 3 caracteres.')
+  }
+
+  if (avatarFile) {
+    const uploadedAvatar = await uploadMedia(userId, avatarFile, 'communities/avatar')
+    if (!uploadedAvatar || uploadedAvatar.type !== 'image') {
+      throw new Error('Foto da comunidade precisa ser uma imagem valida.')
+    }
+    cleanAvatarUrl = uploadedAvatar.url
+  }
+
+  if (coverFile) {
+    const uploadedCover = await uploadMedia(userId, coverFile, 'communities/cover')
+    if (!uploadedCover || uploadedCover.type !== 'image') {
+      throw new Error('Capa da comunidade precisa ser uma imagem valida.')
+    }
+    cleanCoverUrl = uploadedCover.url
   }
 
   let { data, error } = await client

@@ -7178,10 +7178,10 @@
 }
 
 .scene-root.theme-dark button,
-.scene-root.theme-dark input,
-.scene-root.theme-dark textarea,
-.scene-root.theme-dark select {
-  color: #eef5ff !important;
+
+.scene-root.theme-dark textarea
+ {
+  color: #000000 !important;
 }
 
 .scene-root.theme-dark input::placeholder,
@@ -7388,6 +7388,68 @@
   resize: vertical;
 }
 
+.community-admin-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.community-admin-media-card {
+  border-radius: 0.78rem;
+  border: 1px solid rgba(124, 156, 223, 0.3);
+  background: rgba(8, 14, 28, 0.46);
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.community-admin-media-card p {
+  margin: 0;
+  color: #95b2dc;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.community-admin-avatar-preview,
+.community-admin-cover-preview {
+  border-radius: 0.72rem;
+  border: 1px solid rgba(120, 152, 220, 0.34);
+  background: rgba(7, 13, 27, 0.54);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.community-admin-avatar-preview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+
+.community-admin-cover-preview {
+  width: 100%;
+  min-height: 110px;
+}
+
+.community-admin-avatar-preview img,
+.community-admin-cover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.community-admin-avatar-preview span,
+.community-admin-cover-preview span {
+  color: #9db8e1;
+  font-size: 0.78rem;
+}
+
+.community-admin-media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .community-admin-actions {
   display: flex;
   flex-wrap: wrap;
@@ -7483,6 +7545,26 @@
   border-color: #dbdbdb;
 }
 
+.scene-root.theme-clean .community-admin-media-card {
+  background: #ffffff;
+  border-color: #dbdbdb;
+}
+
+.scene-root.theme-clean .community-admin-media-card p {
+  color: #374151;
+}
+
+.scene-root.theme-clean .community-admin-avatar-preview,
+.scene-root.theme-clean .community-admin-cover-preview {
+  background: #f8fafc;
+  border-color: #e5e7eb;
+}
+
+.scene-root.theme-clean .community-admin-avatar-preview span,
+.scene-root.theme-clean .community-admin-cover-preview span {
+  color: #6b7280;
+}
+
 .scene-root.theme-clean .post-edit-form textarea {
   background: #ffffff;
   border-color: #dbdbdb;
@@ -7542,6 +7624,10 @@
 }
 
 @media (max-width: 760px) {
+  .community-admin-media-grid {
+    grid-template-columns: 1fr;
+  }
+
   .post-head-side {
     width: 100%;
     justify-content: flex-start;
