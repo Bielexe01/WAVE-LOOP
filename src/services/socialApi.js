@@ -195,6 +195,14 @@ function isMissingCommunityRelation(error) {
   return isMissingRelationError(error, 'communities') || isMissingRelationError(error, 'community_memberships')
 }
 
+function isMissingCommunityVisualColumns(error) {
+  return (
+    isMissingColumnError(error, 'genre') ||
+    isMissingColumnError(error, 'avatar_url') ||
+    isMissingColumnError(error, 'cover_url')
+  )
+}
+
 function isMissingPlaylistRelation(error) {
   return isMissingRelationError(error, 'spotify_playlists') || isMissingRelationError(error, 'playlist_saves')
 }
@@ -752,6 +760,9 @@ function mapCommunityRow(row, members = 0, joined = false) {
     slug: row.slug,
     description: row.description || '',
     themeColor: row.theme_color || '#3b82f6',
+    genre: row.genre || '',
+    avatarUrl: row.avatar_url || '',
+    coverUrl: row.cover_url || '',
     creatorId: row.creator_id,
     creatorName: safeProfileName(row.profiles),
     creatorHandle: safeHandle(row.profiles),
@@ -844,7 +855,7 @@ export async function fetchCommunities({ userId = '', limit = 40 }) {
   const client = requireSupabase()
   const safeLimit = Math.max(1, Math.min(80, limit))
 
-  const { data: communityRows, error: communitiesError } = await client
+  let { data: communityRows, error: communitiesError } = await client
     .from('communities')
     .select(
       `
@@ -854,6 +865,9 @@ export async function fetchCommunities({ userId = '', limit = 40 }) {
       slug,
       description,
       theme_color,
+      genre,
+      avatar_url,
+      cover_url,
       created_at,
       profiles:creator_id (
         id,
@@ -865,6 +879,33 @@ export async function fetchCommunities({ userId = '', limit = 40 }) {
     )
     .order('created_at', { ascending: false })
     .limit(safeLimit)
+
+  if (communitiesError && isMissingCommunityVisualColumns(communitiesError)) {
+    const fallback = await client
+      .from('communities')
+      .select(
+        `
+        id,
+        creator_id,
+        name,
+        slug,
+        description,
+        theme_color,
+        created_at,
+        profiles:creator_id (
+          id,
+          name,
+          handle,
+          avatar_url
+        )
+      `,
+      )
+      .order('created_at', { ascending: false })
+      .limit(safeLimit)
+
+    communityRows = fallback.data
+    communitiesError = fallback.error
+  }
 
   if (communitiesError) {
     if (isMissingCommunityRelation(communitiesError)) {
@@ -981,6 +1022,104 @@ export async function createCommunity({ userId, name, description = '', themeCol
   }
 
   return mapCommunityRow(insertedRow, 1, true)
+}
+
+export async function updateCommunity({
+  communityId,
+  userId,
+  name,
+  description = '',
+  themeColor = '#3b82f6',
+  genre = '',
+  avatarUrl = '',
+  coverUrl = '',
+}) {
+  const client = requireSupabase()
+  const cleanName = String(name || '').trim()
+  const cleanDescription = String(description || '').trim().slice(0, 500)
+  const cleanGenre = String(genre || '').trim().slice(0, 80)
+  const cleanAvatarUrl = String(avatarUrl || '').trim()
+  const cleanCoverUrl = String(coverUrl || '').trim()
+
+  if (cleanName.length < 3) {
+    throw new Error('Nome da comunidade precisa ter ao menos 3 caracteres.')
+  }
+
+  let { data, error } = await client
+    .from('communities')
+    .update({
+      name: cleanName,
+      description: cleanDescription,
+      theme_color: normalizeThemeColor(themeColor),
+      genre: cleanGenre || null,
+      avatar_url: cleanAvatarUrl || null,
+      cover_url: cleanCoverUrl || null,
+    })
+    .eq('id', communityId)
+    .eq('creator_id', userId)
+    .select(
+      `
+      id,
+      creator_id,
+      name,
+      slug,
+      description,
+      theme_color,
+      genre,
+      avatar_url,
+      cover_url,
+      created_at,
+      profiles:creator_id (
+        id,
+        name,
+        handle,
+        avatar_url
+      )
+    `,
+    )
+    .single()
+
+  if (error && isMissingCommunityVisualColumns(error)) {
+    const fallback = await client
+      .from('communities')
+      .update({
+        name: cleanName,
+        description: cleanDescription,
+        theme_color: normalizeThemeColor(themeColor),
+      })
+      .eq('id', communityId)
+      .eq('creator_id', userId)
+      .select(
+        `
+        id,
+        creator_id,
+        name,
+        slug,
+        description,
+        theme_color,
+        created_at,
+        profiles:creator_id (
+          id,
+          name,
+          handle,
+          avatar_url
+        )
+      `,
+      )
+      .single()
+
+    data = fallback.data
+    error = fallback.error
+  }
+
+  if (error) {
+    if (isMissingCommunityRelation(error)) {
+      throw communitiesSetupError()
+    }
+    throw error
+  }
+
+  return mapCommunityRow(data, 0, true)
 }
 
 export async function toggleCommunityMembership({ communityId, userId }) {
@@ -2335,6 +2474,53 @@ export async function createPost({
   }
 
   return fetchPostById(data.id, currentUserId)
+}
+
+export async function updatePost({
+  postId,
+  userId,
+  currentUserId,
+  content,
+  mood,
+}) {
+  const client = requireSupabase()
+  const cleanContent = String(content || '').trim()
+  const cleanMood = String(mood || '').trim() || 'Alta energia'
+
+  if (!cleanContent) {
+    throw new Error('Post precisa de conteudo.')
+  }
+
+  const { error } = await client
+    .from('posts')
+    .update({
+      content: cleanContent,
+      mood: cleanMood,
+    })
+    .eq('id', postId)
+    .eq('user_id', userId)
+
+  if (error) {
+    throw error
+  }
+
+  return fetchPostById(postId, currentUserId)
+}
+
+export async function deletePost({ postId, userId }) {
+  const client = requireSupabase()
+
+  const { error } = await client
+    .from('posts')
+    .delete()
+    .eq('id', postId)
+    .eq('user_id', userId)
+
+  if (error) {
+    throw error
+  }
+
+  return true
 }
 
 export async function addComment({ postId, userId, content }) {

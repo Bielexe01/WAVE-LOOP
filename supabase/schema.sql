@@ -549,8 +549,29 @@ create table if not exists public.communities (
   slug text not null unique check (char_length(slug) >= 3),
   description text not null default '' check (char_length(description) <= 500),
   theme_color text not null default '#3b82f6',
+  genre text default '' check (char_length(genre) <= 80),
+  avatar_url text,
+  cover_url text,
   created_at timestamptz not null default now()
 );
+
+alter table public.communities add column if not exists genre text default '';
+alter table public.communities add column if not exists avatar_url text;
+alter table public.communities add column if not exists cover_url text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'communities_genre_length_check'
+      and conrelid = 'public.communities'::regclass
+  ) then
+    alter table public.communities
+    add constraint communities_genre_length_check
+    check (char_length(genre) <= 80);
+  end if;
+end $$;
 
 create table if not exists public.community_memberships (
   community_id uuid not null references public.communities(id) on delete cascade,

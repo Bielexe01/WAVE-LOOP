@@ -19,6 +19,7 @@ import {
   createSpotifyCapsuleSnapshot,
   createCommunity,
   createSpotifyPlaylist,
+  deletePost,
   deleteSpotifyConnection,
   ensureProfile,
   fetchActiveStories,
@@ -52,6 +53,8 @@ import {
   toggleCommunityMembership,
   upsertSpotifyConnection,
   updateOwnProfile,
+  updateCommunity,
+  updatePost,
 } from './services/socialApi'
 
 function AmbientBackdrop() {
@@ -1178,8 +1181,44 @@ function App() {
   const [communityFilter, setCommunityFilter] = useState('all')
   const [communityGenreFilter, setCommunityGenreFilter] = useState('all')
   const [communityWorkspaceTab, setCommunityWorkspaceTab] = useState('feed')
+  const [communityViewMode, setCommunityViewMode] = useState('list')
   const [selectedCommunityId, setSelectedCommunityId] = useState('')
+  const [communityMetaById, setCommunityMetaById] = useState(() => {
+    if (typeof window === 'undefined') {
+      return {}
+    }
+
+    try {
+      const raw = window.localStorage.getItem('waveloop:community-meta')
+      if (!raw) {
+        return {}
+      }
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  })
+  const [communityAdminEditing, setCommunityAdminEditing] = useState(false)
+  const [communityAdminSaving, setCommunityAdminSaving] = useState(false)
+  const [communityAdminDraft, setCommunityAdminDraft] = useState({
+    name: '',
+    description: '',
+    themeColor: '#3b82f6',
+    genre: '',
+    avatarUrl: '',
+    coverUrl: '',
+  })
   const [communityFeedById, setCommunityFeedById] = useState({})
+  const [editingCommunityPostId, setEditingCommunityPostId] = useState('')
+  const [communityPostEditDraft, setCommunityPostEditDraft] = useState({
+    title: '',
+    text: '',
+    spotifyUrl: '',
+    mediaUrl: '',
+    albumName: '',
+    rating: 4,
+  })
   const [communityPostDraft, setCommunityPostDraft] = useState({
     type: 'music',
     title: '',
@@ -1271,6 +1310,9 @@ function App() {
     spotifyUrl: '',
     mood: moods[0],
   })
+  const [editingPostId, setEditingPostId] = useState('')
+  const [postEditDraft, setPostEditDraft] = useState({ text: '', mood: moods[0] })
+  const [savingPostEdit, setSavingPostEdit] = useState(false)
   const [spotifyPickerOpen, setSpotifyPickerOpen] = useState(false)
   const [spotifyPickerQuery, setSpotifyPickerQuery] = useState('')
   const [spotifyManualUrl, setSpotifyManualUrl] = useState('')
@@ -1502,11 +1544,23 @@ function App() {
     return { total, joined, mine }
   }, [communities, currentUser])
 
+  const resolveCommunityGenre = useCallback(
+    (community) => {
+      if (!community?.id) {
+        return ''
+      }
+
+      const customGenre = String(communityMetaById[community.id]?.genre || '').trim()
+      return customGenre || String(community.genre || '').trim() || detectCommunityGenre(community)
+    },
+    [communityMetaById],
+  )
+
   const filteredCommunities = useMemo(() => {
     const query = communityQuery.trim().toLowerCase()
 
     return communities.filter((community) => {
-      const communityGenre = detectCommunityGenre(community)
+      const communityGenre = resolveCommunityGenre(community)
 
       if (communityFilter === 'joined' && !community.joined) {
         return false
@@ -1524,11 +1578,15 @@ function App() {
         return true
       }
 
+      const customName = String(communityMetaById[community.id]?.name || '').trim()
+      const customDescription = String(communityMetaById[community.id]?.description || '').trim()
+      const customGenre = String(communityMetaById[community.id]?.genre || '').trim()
       const haystack = [
-        community.name,
-        community.description,
+        customName || community.name,
+        customDescription || community.description,
         community.creatorName,
         community.creatorHandle,
+        customGenre,
       ]
         .filter(Boolean)
         .join(' ')
@@ -1536,19 +1594,40 @@ function App() {
 
       return haystack.includes(query)
     })
-  }, [communities, communityFilter, communityGenreFilter, communityQuery, currentUser])
+  }, [communities, communityFilter, communityGenreFilter, communityMetaById, communityQuery, currentUser, resolveCommunityGenre])
 
   const selectedCommunity = useMemo(() => {
     if (!selectedCommunityId) {
-      return filteredCommunities[0] || null
+      return filteredCommunities[0] || communities[0] || null
     }
 
-    return filteredCommunities.find((community) => community.id === selectedCommunityId) || filteredCommunities[0] || null
-  }, [filteredCommunities, selectedCommunityId])
+    return communities.find((community) => community.id === selectedCommunityId) || filteredCommunities[0] || communities[0] || null
+  }, [communities, filteredCommunities, selectedCommunityId])
+
+  const selectedCommunityVisual = useMemo(() => {
+    if (!selectedCommunity?.id) {
+      return null
+    }
+
+    const custom = communityMetaById[selectedCommunity.id] || {}
+    return {
+      ...selectedCommunity,
+      name: String(custom.name || '').trim() || selectedCommunity.name,
+      description: String(custom.description || '').trim() || selectedCommunity.description || '',
+      themeColor: String(custom.themeColor || '').trim() || selectedCommunity.themeColor || '#3b82f6',
+      avatarUrl: String(custom.avatarUrl || '').trim() || selectedCommunity.avatarUrl || '',
+      coverUrl: String(custom.coverUrl || '').trim() || selectedCommunity.coverUrl || '',
+      genre: String(custom.genre || '').trim() || String(selectedCommunity.genre || '').trim() || detectCommunityGenre(selectedCommunity),
+    }
+  }, [communityMetaById, selectedCommunity])
 
   const selectedCommunityGenre = useMemo(() => {
-    return selectedCommunity ? detectCommunityGenre(selectedCommunity) : ''
-  }, [selectedCommunity])
+    return selectedCommunityVisual ? selectedCommunityVisual.genre : ''
+  }, [selectedCommunityVisual])
+
+  const isSelectedCommunityAdmin = useMemo(() => {
+    return Boolean(selectedCommunity?.creatorId && currentUser?.id && selectedCommunity.creatorId === currentUser.id)
+  }, [currentUser?.id, selectedCommunity])
 
   const activeCommunityFeed = useMemo(() => {
     if (!selectedCommunity?.id) {
@@ -2186,6 +2265,13 @@ function App() {
   }, [communities, communityRankPeriod, currentUser?.id, loadCommunityRankings])
 
   useEffect(() => {
+    if (communityViewMode === 'detail') {
+      if (!selectedCommunityId) {
+        setCommunityViewMode('list')
+      }
+      return
+    }
+
     if (filteredCommunities.length === 0) {
       if (selectedCommunityId) {
         setSelectedCommunityId('')
@@ -2196,7 +2282,17 @@ function App() {
     if (!selectedCommunityId || !filteredCommunities.some((community) => community.id === selectedCommunityId)) {
       setSelectedCommunityId(filteredCommunities[0].id)
     }
-  }, [filteredCommunities, selectedCommunityId])
+  }, [communityViewMode, filteredCommunities, selectedCommunityId])
+
+  useEffect(() => {
+    if (communityViewMode === 'detail' && !selectedCommunity) {
+      setCommunityViewMode('list')
+    }
+  }, [communityViewMode, selectedCommunity])
+
+  useEffect(() => {
+    setCommunityAdminEditing(false)
+  }, [selectedCommunityId])
 
   useEffect(() => {
     if (!communities.length) {
@@ -2551,6 +2647,14 @@ function App() {
     window.localStorage.setItem('waveloop:theme-mode', themeMode)
   }, [themeMode])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem('waveloop:community-meta', JSON.stringify(communityMetaById))
+  }, [communityMetaById])
+
   const openSpotifyPicker = useCallback(() => {
     setSpotifyPickerOpen(true)
     setSpotifyPickerQuery('')
@@ -2603,6 +2707,65 @@ function App() {
         ...current,
         posts: nextPosts,
       }
+    })
+  }, [])
+
+  const replacePostEverywhere = useCallback((nextPost) => {
+    if (!nextPost?.id) {
+      return
+    }
+
+    setPosts((current) => current.map((post) => (post.id === nextPost.id ? nextPost : post)))
+    setPublicProfile((current) => {
+      if (!current) {
+        return current
+      }
+
+      let changed = false
+      const nextPosts = (current.posts || []).map((post) => {
+        if (post.id !== nextPost.id) {
+          return post
+        }
+
+        changed = true
+        return nextPost
+      })
+
+      if (!changed) {
+        return current
+      }
+
+      return {
+        ...current,
+        posts: nextPosts,
+      }
+    })
+  }, [])
+
+  const removePostEverywhere = useCallback((postId) => {
+    if (!postId) {
+      return
+    }
+
+    setPosts((current) => current.filter((post) => post.id !== postId))
+    setPublicProfile((current) => {
+      if (!current) {
+        return current
+      }
+
+      return {
+        ...current,
+        posts: (current.posts || []).filter((post) => post.id !== postId),
+      }
+    })
+    setCommentDrafts((current) => {
+      if (!current[postId]) {
+        return current
+      }
+
+      const next = { ...current }
+      delete next[postId]
+      return next
     })
   }, [])
 
@@ -3548,6 +3711,98 @@ function App() {
     }
   }
 
+  const startEditingPost = (post) => {
+    if (!post || !currentUser || post.user.id !== currentUser.id) {
+      return
+    }
+
+    setEditingPostId(post.id)
+    setPostEditDraft({
+      text: post.text || '',
+      mood: post.mood || moods[0],
+    })
+  }
+
+  const cancelEditingPost = () => {
+    setEditingPostId('')
+    setPostEditDraft({ text: '', mood: moods[0] })
+  }
+
+  const savePostEdit = async (post) => {
+    if (!post || !currentUser || post.user.id !== currentUser.id) {
+      return
+    }
+
+    const text = postEditDraft.text.trim()
+    if (!text) {
+      setErrorMessage('O post precisa de texto.')
+      return
+    }
+
+    const mood = postEditDraft.mood || post.mood || moods[0]
+    setSavingPostEdit(true)
+    setErrorMessage('')
+
+    try {
+      if (isSupabaseConfigured) {
+        const updated = await updatePost({
+          postId: post.id,
+          userId: currentUser.id,
+          currentUserId: currentUser.id,
+          content: text,
+          mood,
+        })
+        replacePostEverywhere(updated)
+      } else {
+        mutatePostEverywhere(post.id, (current) => ({
+          ...current,
+          text,
+          mood,
+        }))
+      }
+
+      setStatusMessage('Post atualizado.')
+      cancelEditingPost()
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel atualizar o post.'))
+    } finally {
+      setSavingPostEdit(false)
+    }
+  }
+
+  const removeOwnPost = async (post) => {
+    if (!post || !currentUser || post.user.id !== currentUser.id) {
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('Deseja excluir este post?')
+      if (!confirmed) {
+        return
+      }
+    }
+
+    try {
+      if (isSupabaseConfigured) {
+        await deletePost({
+          postId: post.id,
+          userId: currentUser.id,
+        })
+      }
+
+      removePostEverywhere(post.id)
+      if (playingPostId === post.id) {
+        setPlayingPostId('')
+      }
+      if (editingPostId === post.id) {
+        cancelEditingPost()
+      }
+      setStatusMessage('Post excluido.')
+    } catch (error) {
+      setErrorMessage(toMessage(error, 'Nao foi possivel excluir o post.'))
+    }
+  }
+
   const clearProfileAvatarSelection = () => {
     if (profileAvatarPreview) {
       URL.revokeObjectURL(profileAvatarPreview)
@@ -3981,6 +4236,137 @@ function App() {
     await syncSpotifyCapsule(currentUser.id, { period: spotifyCapsulePeriod })
   }
 
+  const openCommunityWorkspace = useCallback((communityId) => {
+    if (!communityId) {
+      return
+    }
+
+    setSelectedCommunityId(communityId)
+    setCommunityWorkspaceTab('feed')
+    setCommunityViewMode('detail')
+  }, [])
+
+  const returnToCommunityList = useCallback(() => {
+    setCommunityViewMode('list')
+  }, [])
+
+  const openCommunityAdminEditor = useCallback(() => {
+    if (!selectedCommunityVisual || !isSelectedCommunityAdmin) {
+      return
+    }
+
+    setCommunityAdminDraft({
+      name: selectedCommunityVisual.name || '',
+      description: selectedCommunityVisual.description || '',
+      themeColor: selectedCommunityVisual.themeColor || '#3b82f6',
+      genre: selectedCommunityVisual.genre || '',
+      avatarUrl: selectedCommunityVisual.avatarUrl || '',
+      coverUrl: selectedCommunityVisual.coverUrl || '',
+    })
+    setCommunityAdminEditing(true)
+  }, [isSelectedCommunityAdmin, selectedCommunityVisual])
+
+  const cancelCommunityAdminEditor = useCallback(() => {
+    setCommunityAdminEditing(false)
+  }, [])
+
+  const saveCommunityAdminEditor = useCallback(
+    async (event) => {
+      event.preventDefault()
+
+      if (!selectedCommunity || !currentUser?.id || selectedCommunity.creatorId !== currentUser.id) {
+        setErrorMessage('Apenas o admin da comunidade pode editar esses dados.')
+        return
+      }
+
+      const name = communityAdminDraft.name.trim()
+      const description = communityAdminDraft.description.trim()
+      const themeColor = communityAdminDraft.themeColor.trim() || '#3b82f6'
+      const genre = communityAdminDraft.genre.trim()
+      const avatarUrl = communityAdminDraft.avatarUrl.trim()
+      const coverUrl = communityAdminDraft.coverUrl.trim()
+
+      if (name.length < 3) {
+        setErrorMessage('Nome da comunidade precisa ter ao menos 3 caracteres.')
+        return
+      }
+
+      setCommunityAdminSaving(true)
+      setErrorMessage('')
+
+      try {
+        if (isSupabaseConfigured) {
+          const updated = await updateCommunity({
+            communityId: selectedCommunity.id,
+            userId: currentUser.id,
+            name,
+            description,
+            themeColor,
+            genre,
+            avatarUrl,
+            coverUrl,
+          })
+
+          setCommunities((current) =>
+            current.map((community) =>
+              community.id === selectedCommunity.id
+                ? {
+                    ...community,
+                    ...updated,
+                    members: community.members,
+                    joined: community.joined,
+                  }
+                : community,
+            ),
+          )
+        } else {
+          setCommunities((current) =>
+            current.map((community) =>
+              community.id === selectedCommunity.id
+                ? {
+                    ...community,
+                    name,
+                    description,
+                    themeColor,
+                  }
+                : community,
+            ),
+          )
+        }
+
+        setCommunityMetaById((current) => ({
+          ...current,
+          [selectedCommunity.id]: {
+            ...(current[selectedCommunity.id] || {}),
+            name,
+            description,
+            themeColor,
+            genre,
+            avatarUrl,
+            coverUrl,
+          },
+        }))
+
+        setCommunityAdminEditing(false)
+        setStatusMessage('Comunidade atualizada.')
+      } catch (error) {
+        setErrorMessage(toMessage(error, 'Nao foi possivel atualizar a comunidade agora.'))
+      } finally {
+        setCommunityAdminSaving(false)
+      }
+    },
+    [
+      communityAdminDraft.avatarUrl,
+      communityAdminDraft.coverUrl,
+      communityAdminDraft.description,
+      communityAdminDraft.genre,
+      communityAdminDraft.name,
+      communityAdminDraft.themeColor,
+      currentUser?.id,
+      selectedCommunity,
+    ],
+  )
+
   const toggleCommunityJoin = async (communityId, options = {}) => {
     if (!currentUser?.id || !communityId) {
       setErrorMessage('Entre na sua conta para participar de comunidades.')
@@ -4214,6 +4600,107 @@ function App() {
       rating: 4,
     })
     setStatusMessage('Post publicado no feed da comunidade.')
+  }
+
+  const startEditingCommunityPost = (post) => {
+    if (!selectedCommunity?.id || !currentUser?.id || !post || post.author?.id !== currentUser.id) {
+      return
+    }
+
+    setEditingCommunityPostId(post.id)
+    setCommunityPostEditDraft({
+      title: post.title || '',
+      text: post.text || '',
+      spotifyUrl: post.spotifyUrl || '',
+      mediaUrl: post.mediaUrl || '',
+      albumName: post.albumName || '',
+      rating: Number(post.rating || 4),
+    })
+  }
+
+  const cancelEditingCommunityPost = () => {
+    setEditingCommunityPostId('')
+    setCommunityPostEditDraft({
+      title: '',
+      text: '',
+      spotifyUrl: '',
+      mediaUrl: '',
+      albumName: '',
+      rating: 4,
+    })
+  }
+
+  const saveCommunityPostEdit = (postId) => {
+    if (!selectedCommunity?.id || !currentUser?.id || !postId) {
+      return
+    }
+
+    const title = communityPostEditDraft.title.trim()
+    const text = communityPostEditDraft.text.trim()
+    const spotifyUrl = communityPostEditDraft.spotifyUrl.trim()
+    const mediaUrl = communityPostEditDraft.mediaUrl.trim()
+    const albumName = communityPostEditDraft.albumName.trim()
+    const rating = Math.max(1, Math.min(5, Number(communityPostEditDraft.rating || 4)))
+
+    if (!title && !text && !spotifyUrl && !mediaUrl) {
+      setErrorMessage('Preencha titulo, texto ou link para atualizar o post.')
+      return
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.map((post) => {
+        if (post.id !== postId || post.author?.id !== currentUser.id) {
+          return post
+        }
+
+        return {
+          ...post,
+          title,
+          text,
+          spotifyUrl,
+          mediaUrl,
+          albumName,
+          rating: post.type === 'rating' ? rating : post.rating,
+        }
+      })
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+
+    cancelEditingCommunityPost()
+    setStatusMessage('Post da comunidade atualizado.')
+  }
+
+  const removeCommunityPost = (postId) => {
+    if (!selectedCommunity?.id || !currentUser?.id || !postId) {
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('Deseja excluir este post da comunidade?')
+      if (!confirmed) {
+        return
+      }
+    }
+
+    setCommunityFeedById((current) => {
+      const currentPosts = current[selectedCommunity.id] || []
+      const nextPosts = currentPosts.filter((post) => !(post.id === postId && post.author?.id === currentUser.id))
+
+      return {
+        ...current,
+        [selectedCommunity.id]: nextPosts,
+      }
+    })
+
+    if (editingCommunityPostId === postId) {
+      cancelEditingCommunityPost()
+    }
+    setStatusMessage('Post removido da comunidade.')
   }
 
   const toggleCommunityFeedLike = (postId) => {
@@ -4762,10 +5249,12 @@ function App() {
   }
 
   const isDirectFullscreen = activeNav === 'Direct' && !publicProfile
+  const isCommunityView = activeNav === 'Comunidades' && !publicProfile
   const rootClassName = [
     'scene-root',
     `theme-${themeMode}`,
     isDirectFullscreen ? 'is-direct-fullscreen' : '',
+    isCommunityView ? 'is-community-view' : '',
     isMobileViewport && isDirectFullscreen ? 'is-mobile-direct' : '',
   ]
     .filter(Boolean)
@@ -5182,231 +5671,359 @@ function App() {
           )}
 
           {activeNav === 'Comunidades' && !publicProfile && (
-            <section className="mode-board appear-up">
+            <section className="mode-board community-fb-board appear-up">
               <header className="mode-board-head">
                 <div>
                   <h2>Comunidades</h2>
-                  <p>Descubra grupos, participe de discussões e acompanhe rankings internos.</p>
+                  <p>
+                    {communityViewMode === 'detail' && selectedCommunity
+                      ? `Dentro de ${selectedCommunity.name}: feed, forum, colaboracoes, desafios e playlists.`
+                      : 'Descubra grupos, participe de discussões e acompanhe rankings internos.'}
+                  </p>
                 </div>
-                <div className="community-stats-row">
-                  <span className="community-stat-pill">Total {compact(communityStats.total)}</span>
-                  <span className="community-stat-pill">Participando {compact(communityStats.joined)}</span>
-                  <span className="community-stat-pill">Minhas {compact(communityStats.mine)}</span>
+                <div className="community-head-actions">
+                  <div className="community-stats-row">
+                    <span className="community-stat-pill">Total {compact(communityStats.total)}</span>
+                    <span className="community-stat-pill">Participando {compact(communityStats.joined)}</span>
+                    <span className="community-stat-pill">Minhas {compact(communityStats.mine)}</span>
+                  </div>
+                  {communityViewMode === 'detail' && (
+                    <button type="button" className="secondary-btn" onClick={returnToCommunityList}>
+                      Voltar para comunidades
+                    </button>
+                  )}
                 </div>
               </header>
 
-              <div className="community-controls">
-                <input
-                  type="search"
-                  value={communityQuery}
-                  onChange={(event) => setCommunityQuery(event.target.value)}
-                  placeholder="Buscar comunidade por nome, descricao ou criador..."
-                />
-                <div className="community-filter-row">
-                  <button
-                    type="button"
-                    className={communityGenreFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
-                    onClick={() => setCommunityGenreFilter('all')}
-                  >
-                    Todos os generos
-                  </button>
-                  {communityGenreOptions.map((genre) => (
-                    <button
-                      type="button"
-                      key={`community-genre-${genre}`}
-                      className={communityGenreFilter === genre ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityGenreFilter(genre)}
-                    >
-                      {genre}
-                    </button>
-                  ))}
-                </div>
-                <div className="community-filter-row">
-                  <button
-                    type="button"
-                    className={communityFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
-                    onClick={() => setCommunityFilter('all')}
-                  >
-                    Todas
-                  </button>
-                  <button
-                    type="button"
-                    className={communityFilter === 'joined' ? 'secondary-btn followed' : 'secondary-btn'}
-                    onClick={() => setCommunityFilter('joined')}
-                  >
-                    Participando
-                  </button>
-                  <button
-                    type="button"
-                    className={communityFilter === 'mine' ? 'secondary-btn followed' : 'secondary-btn'}
-                    onClick={() => setCommunityFilter('mine')}
-                    disabled={!currentUser}
-                  >
-                    Criadas por mim
-                  </button>
-                </div>
-              </div>
-
-              <div className="community-ranking-periods">
-                {spotifyCapsulePeriods.map((periodOption) => (
-                  <button
-                    type="button"
-                    key={`community-rank-period-${periodOption.id}`}
-                    className={communityRankPeriod === periodOption.id ? 'secondary-btn followed' : 'secondary-btn'}
-                    onClick={() => setCommunityRankPeriod(periodOption.id)}
-                  >
-                    Top {periodOption.label}
-                  </button>
-                ))}
-              </div>
-              <form className="mode-create-form" onSubmit={submitCommunity}>
-                <div className="mode-create-grid">
-                  <input
-                    type="text"
-                    value={communityDraft.name}
-                    onChange={(event) => setCommunityDraft((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Nome da comunidade"
-                  />
-                  <input
-                    type="text"
-                    value={communityDraft.description}
-                    onChange={(event) => setCommunityDraft((current) => ({ ...current, description: event.target.value }))}
-                    placeholder="Descricao curta"
-                  />
-                  <label className="mode-create-color">
-                    Cor
+              <div className="community-fb-layout">
+                <aside className="community-fb-left">
+                  <div className="community-controls">
                     <input
-                      type="color"
-                      value={communityDraft.themeColor}
-                      onChange={(event) => setCommunityDraft((current) => ({ ...current, themeColor: event.target.value }))}
+                      type="search"
+                      value={communityQuery}
+                      onChange={(event) => setCommunityQuery(event.target.value)}
+                      placeholder="Buscar comunidade por nome, descricao ou criador..."
                     />
-                  </label>
-                </div>
-                <button type="submit" className="primary-btn" disabled={creatingCommunity}>
-                  {creatingCommunity ? 'Criando...' : 'Criar comunidade'}
-                </button>
-              </form>
-
-              {selectedCommunity && (
-                <article className="community-focus-card">
-                  <header className="community-focus-head">
-                    <div>
-                      <h3>{selectedCommunity.name}</h3>
-                      <p>{selectedCommunity.description || 'Comunidade sem descricao por enquanto.'}</p>
+                    <div className="community-filter-row">
+                      <button
+                        type="button"
+                        className={communityGenreFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
+                        onClick={() => setCommunityGenreFilter('all')}
+                      >
+                        Todos os generos
+                      </button>
+                      {communityGenreOptions.map((genre) => (
+                        <button
+                          type="button"
+                          key={`community-genre-${genre}`}
+                          className={communityGenreFilter === genre ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityGenreFilter(genre)}
+                        >
+                          {genre}
+                        </button>
+                      ))}
                     </div>
-                    <span className="community-focus-meta">
-                      {compact(selectedCommunity.members || 0)} membros • {selectedCommunityGenre} • @{normalizeHandle(selectedCommunity.creatorHandle || 'comunidade')}
-                    </span>
-                  </header>
-
-                  <div className="community-focus-actions">
-                    <button
-                      type="button"
-                      className={selectedCommunity.joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
-                      onClick={() => toggleCommunityJoin(selectedCommunity.id, { confirmLeave: selectedCommunity.joined })}
-                    >
-                      {selectedCommunity.joined ? 'Sair da comunidade' : 'Participar da comunidade'}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => void openPublicProfile(selectedCommunity.creatorHandle || '')}
-                    >
-                      Ver criador
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      disabled={!selectedCommunity.creatorId || selectedCommunity.creatorId === currentUser?.id}
-                      onClick={() =>
-                        void openOrCreateDirectWithUser({
-                          id: selectedCommunity.creatorId,
-                          name: selectedCommunity.creatorName,
-                          handle: normalizeHandle(selectedCommunity.creatorHandle || ''),
-                          avatarUrl: null,
-                        })
-                      }
-                    >
-                      Falar no direct
-                    </button>
+                    <div className="community-filter-row">
+                      <button
+                        type="button"
+                        className={communityFilter === 'all' ? 'secondary-btn followed' : 'secondary-btn'}
+                        onClick={() => setCommunityFilter('all')}
+                      >
+                        Todas
+                      </button>
+                      <button
+                        type="button"
+                        className={communityFilter === 'joined' ? 'secondary-btn followed' : 'secondary-btn'}
+                        onClick={() => setCommunityFilter('joined')}
+                      >
+                        Participando
+                      </button>
+                      <button
+                        type="button"
+                        className={communityFilter === 'mine' ? 'secondary-btn followed' : 'secondary-btn'}
+                        onClick={() => setCommunityFilter('mine')}
+                        disabled={!currentUser}
+                      >
+                        Criadas por mim
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="community-leaderboard">
-                    <strong className="community-leaderboard-title">
-                      Top ouvintes ({capsulePeriodLabel(communityRankPeriod)})
-                    </strong>
-                    {loadingCommunityRankings ? (
-                      <p className="community-leaderboard-empty">Carregando ranking...</p>
-                    ) : (communityRankingsById[selectedCommunity.id] || []).length > 0 ? (
-                      <ul className="community-leaderboard-list">
-                        {(communityRankingsById[selectedCommunity.id] || []).map((entry, index) => (
-                          <li key={`${selectedCommunity.id}-focus-rank-${entry.userId || entry.id || index}`}>
-                            <span className="community-rank-pos">#{entry.rank || index + 1}</span>
-                            <div className="community-rank-user">
-                              <strong>{entry.user?.name || 'Usuario'}</strong>
-                              <p>@{normalizeHandle(entry.user?.handle || 'usuario')}</p>
+                  <form className="mode-create-form" onSubmit={submitCommunity}>
+                    <div className="mode-create-grid">
+                      <input
+                        type="text"
+                        value={communityDraft.name}
+                        onChange={(event) => setCommunityDraft((current) => ({ ...current, name: event.target.value }))}
+                        placeholder="Nome da comunidade"
+                      />
+                      <input
+                        type="text"
+                        value={communityDraft.description}
+                        onChange={(event) => setCommunityDraft((current) => ({ ...current, description: event.target.value }))}
+                        placeholder="Descricao curta"
+                      />
+                      <label className="mode-create-color">
+                        Cor
+                        <input
+                          type="color"
+                          value={communityDraft.themeColor}
+                          onChange={(event) => setCommunityDraft((current) => ({ ...current, themeColor: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                    <button type="submit" className="primary-btn" disabled={creatingCommunity}>
+                      {creatingCommunity ? 'Criando...' : 'Criar comunidade'}
+                    </button>
+                  </form>
+                  {loadingCommunities && <div className="notice">Carregando comunidades...</div>}
+                  <div className="mode-board-grid community-list-grid">
+                    {filteredCommunities.map((community) => {
+                      const joined = Boolean(community.joined)
+                      const communityRanking = communityRankingsById[community.id] || []
+                      const isSelected = selectedCommunity?.id === community.id
+                      return (
+                        <article
+                          key={community.id}
+                          className={isSelected ? 'mode-card is-selected community-list-card' : 'mode-card community-list-card'}
+                          style={{
+                            borderColor: community.themeColor || undefined,
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openCommunityWorkspace(community.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              openCommunityWorkspace(community.id)
+                            }
+                          }}
+                        >
+                          <h3>{community.name}</h3>
+                          <p>{community.description || 'Comunidade sem descricao por enquanto.'}</p>
+                          <span>
+                            {compact(community.members || 0)} membros • {resolveCommunityGenre(community)} • @{normalizeHandle(community.creatorHandle || 'comunidade')}
+                          </span>
+                          {communityRanking[0] && (
+                            <div className="community-top-one">
+                              <span>Top #1</span>
+                              <strong>{communityRanking[0]?.user?.name || 'Usuario'}</strong>
+                              <p>{compact(communityRanking[0]?.score || 0)} pts</p>
                             </div>
-                            <div className="community-rank-score">
-                              <strong>{compact(entry.score || 0)}</strong>
-                              <span>pts</span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="community-leaderboard-empty">Sem ranking nesta comunidade ainda.</p>
-                    )}
+                          )}
+                          <div className="community-card-actions">
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                openCommunityWorkspace(community.id)
+                              }}
+                            >
+                              Abrir comunidade
+                            </button>
+                            <button
+                              type="button"
+                              className={joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void toggleCommunityJoin(community.id, { confirmLeave: joined })
+                              }}
+                            >
+                              {joined ? 'Sair' : 'Participar'}
+                            </button>
+                          </div>
+                        </article>
+                      )
+                    })}
                   </div>
-                </article>
-              )}
+                  {!loadingCommunities && communities.length === 0 && (
+                    <div className="notice">Nenhuma comunidade criada ainda. Crie a primeira.</div>
+                  )}
+                  {!loadingCommunities && communities.length > 0 && filteredCommunities.length === 0 && (
+                    <div className="notice">Nenhuma comunidade encontrada com esse filtro.</div>
+                  )}
+                </aside>
 
-              {selectedCommunity && (
+                <main className="community-fb-center">
+                  {communityViewMode === 'detail' && selectedCommunityVisual && (
+                    <article className="community-page-hero">
+                      <div
+                        className="community-page-cover"
+                        style={{
+                          background: selectedCommunityVisual.coverUrl
+                            ? `center / cover no-repeat url('${selectedCommunityVisual.coverUrl}')`
+                            : `linear-gradient(130deg, ${selectedCommunityVisual.themeColor || '#1877f2'} 0%, rgba(24, 119, 242, 0.68) 45%, rgba(12, 18, 32, 0.92) 100%)`,
+                        }}
+                      />
+                      <div className="community-page-profile">
+                        <div className="community-page-avatar">
+                          {selectedCommunityVisual.avatarUrl ? (
+                            <img src={selectedCommunityVisual.avatarUrl} alt={selectedCommunityVisual.name} />
+                          ) : (
+                            initials(selectedCommunityVisual.name || 'C')
+                          )}
+                        </div>
+                        <div className="community-page-meta">
+                          <h3>{selectedCommunityVisual.name}</h3>
+                          <p className="community-page-bio">
+                            {selectedCommunityVisual.description || 'Comunidade sem bio por enquanto.'}
+                          </p>
+                          <span>
+                            {compact(selectedCommunityVisual.members || 0)} membros • {selectedCommunityGenre} • @{normalizeHandle(selectedCommunityVisual.creatorHandle || 'comunidade')}
+                          </span>
+                        </div>
+                        <div className="community-page-actions">
+                          <button
+                            type="button"
+                            className={selectedCommunityVisual.joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
+                            onClick={() => toggleCommunityJoin(selectedCommunityVisual.id, { confirmLeave: selectedCommunityVisual.joined })}
+                          >
+                            {selectedCommunityVisual.joined ? 'Sair da comunidade' : 'Participar'}
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => void openPublicProfile(selectedCommunityVisual.creatorHandle || '')}
+                          >
+                            Ver criador
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            disabled={!selectedCommunityVisual.creatorId || selectedCommunityVisual.creatorId === currentUser?.id}
+                            onClick={() =>
+                              void openOrCreateDirectWithUser({
+                                id: selectedCommunityVisual.creatorId,
+                                name: selectedCommunityVisual.creatorName,
+                                handle: normalizeHandle(selectedCommunityVisual.creatorHandle || ''),
+                                avatarUrl: null,
+                              })
+                            }
+                          >
+                            Mensagem
+                          </button>
+                          {isSelectedCommunityAdmin && (
+                            <button type="button" className="secondary-btn" onClick={openCommunityAdminEditor}>
+                              Editar comunidade
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="community-page-tabs">
+                        <button
+                          type="button"
+                          className={communityWorkspaceTab === 'feed' ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityWorkspaceTab('feed')}
+                        >
+                          Discussao
+                        </button>
+                        <button
+                          type="button"
+                          className={communityWorkspaceTab === 'forum' ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityWorkspaceTab('forum')}
+                        >
+                          Topicos
+                        </button>
+                        <button
+                          type="button"
+                          className={communityWorkspaceTab === 'collab' ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityWorkspaceTab('collab')}
+                        >
+                          Colaboracao
+                        </button>
+                        <button
+                          type="button"
+                          className={communityWorkspaceTab === 'challenges' ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityWorkspaceTab('challenges')}
+                        >
+                          Desafios
+                        </button>
+                        <button
+                          type="button"
+                          className={communityWorkspaceTab === 'playlists' ? 'secondary-btn followed' : 'secondary-btn'}
+                          onClick={() => setCommunityWorkspaceTab('playlists')}
+                        >
+                          Midia
+                        </button>
+                      </div>
+                    </article>
+                  )}
+
+                  {communityViewMode === 'detail' && selectedCommunity && isSelectedCommunityAdmin && communityAdminEditing && (
+                    <form className="community-admin-editor" onSubmit={saveCommunityAdminEditor}>
+                      <div className="community-inline-grid two">
+                        <input
+                          type="text"
+                          value={communityAdminDraft.name}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, name: event.target.value }))
+                          }
+                          placeholder="Nome da comunidade"
+                        />
+                        <select
+                          value={communityAdminDraft.genre}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, genre: event.target.value }))
+                          }
+                        >
+                          <option value="">Genero automatico</option>
+                          {communityGenreOptions.map((genreOption) => (
+                            <option key={`community-admin-genre-${genreOption}`} value={genreOption}>
+                              {genreOption}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={communityAdminDraft.avatarUrl}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, avatarUrl: event.target.value }))
+                          }
+                          placeholder="URL da foto da comunidade"
+                        />
+                        <input
+                          type="text"
+                          value={communityAdminDraft.coverUrl}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, coverUrl: event.target.value }))
+                          }
+                          placeholder="URL da capa"
+                        />
+                      </div>
+                      <div className="community-inline-grid two">
+                        <textarea
+                          value={communityAdminDraft.description}
+                          onChange={(event) =>
+                            setCommunityAdminDraft((current) => ({ ...current, description: event.target.value }))
+                          }
+                          placeholder="Bio da comunidade"
+                        />
+                        <label className="mode-create-color community-admin-color">
+                          Cor da comunidade
+                          <input
+                            type="color"
+                            value={communityAdminDraft.themeColor}
+                            onChange={(event) =>
+                              setCommunityAdminDraft((current) => ({ ...current, themeColor: event.target.value }))
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="community-admin-actions">
+                        <button type="submit" className="primary-btn" disabled={communityAdminSaving}>
+                          {communityAdminSaving ? 'Salvando...' : 'Salvar alteracoes'}
+                        </button>
+                        <button type="button" className="secondary-btn" onClick={cancelCommunityAdminEditor}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+              {communityViewMode === 'detail' && selectedCommunity && (
                 <section className="community-workspace">
-                  <header className="community-workspace-head">
-                    <h3>Hub da comunidade</h3>
-                    <p>
-                      Genero: <strong>{selectedCommunityGenre}</strong>
-                    </p>
-                  </header>
-
-                  <div className="community-workspace-tabs">
-                    <button
-                      type="button"
-                      className={communityWorkspaceTab === 'feed' ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityWorkspaceTab('feed')}
-                    >
-                      Feed
-                    </button>
-                    <button
-                      type="button"
-                      className={communityWorkspaceTab === 'forum' ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityWorkspaceTab('forum')}
-                    >
-                      Forum
-                    </button>
-                    <button
-                      type="button"
-                      className={communityWorkspaceTab === 'collab' ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityWorkspaceTab('collab')}
-                    >
-                      Colaboracao
-                    </button>
-                    <button
-                      type="button"
-                      className={communityWorkspaceTab === 'challenges' ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityWorkspaceTab('challenges')}
-                    >
-                      Desafios
-                    </button>
-                    <button
-                      type="button"
-                      className={communityWorkspaceTab === 'playlists' ? 'secondary-btn followed' : 'secondary-btn'}
-                      onClick={() => setCommunityWorkspaceTab('playlists')}
-                    >
-                      Playlists
-                    </button>
-                  </div>
-
                   {communityWorkspaceTab === 'feed' && (
                     <div className="community-workspace-pane">
                       <form className="community-inline-form" onSubmit={publishCommunityPost}>
@@ -5485,12 +6102,91 @@ function App() {
                       <div className="community-post-list">
                         {activeCommunityFeed.map((post) => {
                           const commentDraftKey = `${selectedCommunity.id}:${post.id}`
+                          const isOwnCommunityPost = Boolean(currentUser?.id && post.author?.id === currentUser.id)
+                          const isEditingCommunityPost = isOwnCommunityPost && editingCommunityPostId === post.id
                           return (
                             <article key={post.id} className="community-post-card">
                               <header>
                                 <strong>{post.title || 'Post da comunidade'}</strong>
                                 <span>{post.type}</span>
                               </header>
+                              {isOwnCommunityPost && (
+                                <div className="community-owner-actions">
+                                  <button type="button" className="secondary-btn" onClick={() => startEditingCommunityPost(post)}>
+                                    Editar
+                                  </button>
+                                  <button type="button" className="secondary-btn community-leave-btn" onClick={() => removeCommunityPost(post.id)}>
+                                    Excluir
+                                  </button>
+                                </div>
+                              )}
+                              {isEditingCommunityPost ? (
+                                <div className="community-inline-form">
+                                  <div className="community-inline-grid two">
+                                    <input
+                                      type="text"
+                                      value={communityPostEditDraft.title}
+                                      onChange={(event) =>
+                                        setCommunityPostEditDraft((current) => ({ ...current, title: event.target.value }))
+                                      }
+                                      placeholder="Titulo do post"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={communityPostEditDraft.albumName}
+                                      onChange={(event) =>
+                                        setCommunityPostEditDraft((current) => ({ ...current, albumName: event.target.value }))
+                                      }
+                                      placeholder="Album (opcional)"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={communityPostEditDraft.spotifyUrl}
+                                      onChange={(event) =>
+                                        setCommunityPostEditDraft((current) => ({ ...current, spotifyUrl: event.target.value }))
+                                      }
+                                      placeholder="Link Spotify"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={communityPostEditDraft.mediaUrl}
+                                      onChange={(event) =>
+                                        setCommunityPostEditDraft((current) => ({ ...current, mediaUrl: event.target.value }))
+                                      }
+                                      placeholder="URL de midia"
+                                    />
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={5}
+                                      value={communityPostEditDraft.rating}
+                                      onChange={(event) =>
+                                        setCommunityPostEditDraft((current) => ({
+                                          ...current,
+                                          rating: Math.max(1, Math.min(5, Number(event.target.value || 4))),
+                                        }))
+                                      }
+                                      disabled={post.type !== 'rating'}
+                                    />
+                                  </div>
+                                  <textarea
+                                    value={communityPostEditDraft.text}
+                                    onChange={(event) =>
+                                      setCommunityPostEditDraft((current) => ({ ...current, text: event.target.value }))
+                                    }
+                                    placeholder="Atualize o texto do post"
+                                  />
+                                  <div className="community-owner-actions">
+                                    <button type="button" className="primary-btn" onClick={() => saveCommunityPostEdit(post.id)}>
+                                      Salvar
+                                    </button>
+                                    <button type="button" className="secondary-btn" onClick={cancelEditingCommunityPost}>
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
                               {post.text && <p>{post.text}</p>}
                               {post.albumName && <p className="community-post-meta">Album: {post.albumName}</p>}
                               {post.spotifyUrl && (
@@ -5539,6 +6235,8 @@ function App() {
                                     </li>
                                   ))}
                                 </ul>
+                              )}
+                                </>
                               )}
                             </article>
                           )
@@ -5826,58 +6524,68 @@ function App() {
                 </section>
               )}
 
-              {loadingCommunities && <div className="notice">Carregando comunidades...</div>}
-              <div className="mode-board-grid">
-                {filteredCommunities.map((community) => {
-                  const joined = Boolean(community.joined)
-                  const communityRanking = communityRankingsById[community.id] || []
-                  const isSelected = selectedCommunity?.id === community.id
-                  return (
-                    <article
-                      key={community.id}
-                      className={isSelected ? 'mode-card is-selected' : 'mode-card'}
-                      style={{
-                        borderColor: community.themeColor || undefined,
-                      }}
-                    >
-                      <h3>{community.name}</h3>
-                      <p>{community.description || 'Comunidade sem descricao por enquanto.'}</p>
+              {communityViewMode === 'detail' && !selectedCommunity && (
+                <div className="notice">Comunidade nao encontrada. Volte para a lista e selecione outra.</div>
+              )}
+                {communityViewMode !== 'detail' && (
+                  <div className="notice">Escolha uma comunidade na coluna da esquerda para abrir o hub completo.</div>
+                )}
+                </main>
+
+                <aside className="community-fb-right">
+                  <div className="community-ranking-periods">
+                    {spotifyCapsulePeriods.map((periodOption) => (
+                      <button
+                        type="button"
+                        key={`community-rank-period-sidebar-${periodOption.id}`}
+                        className={communityRankPeriod === periodOption.id ? 'secondary-btn followed' : 'secondary-btn'}
+                        onClick={() => setCommunityRankPeriod(periodOption.id)}
+                      >
+                        Top {periodOption.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <article className="community-fb-widget">
+                    <h3>Resumo</h3>
+                    <p>
+                      {selectedCommunity
+                        ? `${selectedCommunity.name} • ${compact(selectedCommunity.members || 0)} membros`
+                        : 'Selecione uma comunidade para ver resumo e ranking.'}
+                    </p>
+                    {selectedCommunity && (
                       <span>
-                        {compact(community.members || 0)} membros • {detectCommunityGenre(community)} • @{normalizeHandle(community.creatorHandle || 'comunidade')}
+                        Genero {selectedCommunityGenre} • @{normalizeHandle(selectedCommunity.creatorHandle || 'comunidade')}
                       </span>
-                      {communityRanking[0] && (
-                        <div className="community-top-one">
-                          <span>Top #1</span>
-                          <strong>{communityRanking[0]?.user?.name || 'Usuario'}</strong>
-                          <p>{compact(communityRanking[0]?.score || 0)} pts</p>
-                        </div>
-                      )}
-                      <div className="community-card-actions">
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => setSelectedCommunityId(community.id)}
-                        >
-                          Ver detalhes
-                        </button>
-                        <button
-                          type="button"
-                          className={joined ? 'secondary-btn community-leave-btn' : 'secondary-btn followed'}
-                          onClick={() => toggleCommunityJoin(community.id, { confirmLeave: joined })}
-                        >
-                          {joined ? 'Sair' : 'Participar'}
-                        </button>
-                      </div>
-                    </article>
-                  )
-                })}
+                    )}
+                  </article>
+
+                  <article className="community-fb-widget">
+                    <h3>Top ouvintes</h3>
+                    {selectedCommunity && loadingCommunityRankings ? (
+                      <p>Carregando ranking...</p>
+                    ) : selectedCommunity && (communityRankingsById[selectedCommunity.id] || []).length > 0 ? (
+                      <ul className="community-leaderboard-list">
+                        {(communityRankingsById[selectedCommunity.id] || []).slice(0, 5).map((entry, index) => (
+                          <li key={`sidebar-rank-${selectedCommunity.id}-${entry.userId || index}`}>
+                            <span className="community-rank-pos">#{entry.rank || index + 1}</span>
+                            <div className="community-rank-user">
+                              <strong>{entry.user?.name || 'Usuario'}</strong>
+                              <p>@{normalizeHandle(entry.user?.handle || 'usuario')}</p>
+                            </div>
+                            <div className="community-rank-score">
+                              <strong>{compact(entry.score || 0)}</strong>
+                              <span>pts</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>Sem ranking nesta comunidade ainda.</p>
+                    )}
+                  </article>
+                </aside>
               </div>
-              {!loadingCommunities && communities.length === 0 && (
-                <div className="notice">Nenhuma comunidade criada ainda. Crie a primeira.</div>
-              )}
-              {!loadingCommunities && communities.length > 0 && filteredCommunities.length === 0 && (
-                <div className="notice">Nenhuma comunidade encontrada com esse filtro.</div>
-              )}
             </section>
           )}
 
@@ -6663,7 +7371,10 @@ function App() {
               <div className="notice">Nenhum resultado para "{searchQuery}".</div>
             )}
 
-            {displayedPosts.map((post, index) => (
+            {displayedPosts.map((post, index) => {
+              const isOwnPost = Boolean(currentUser?.id && post.user.id === currentUser.id)
+              const isEditingPost = isOwnPost && editingPostId === post.id
+              return (
               <article
                 key={post.id}
                 className={playingPostId === post.id ? 'post-card appear-up is-playing' : 'post-card appear-up'}
@@ -6696,71 +7407,131 @@ function App() {
                       </p>
                     </div>
                   </div>
-                  <span className="mood-pill">{post.mood}</span>
+                  <div className="post-head-side">
+                    <span className="mood-pill">{post.mood}</span>
+                    {isOwnPost && !isEditingPost && (
+                      <div className="post-owner-actions">
+                        <button type="button" className="secondary-btn" onClick={() => startEditingPost(post)}>
+                          Editar
+                        </button>
+                        <button type="button" className="secondary-btn community-leave-btn" onClick={() => void removeOwnPost(post)}>
+                          Excluir
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </header>
 
-                <p className="post-text">{post.text}</p>
-
-                {post.track && (
-                  <div className="track-preview">
-                    <div
-                      className="track-cover"
-                      aria-hidden="true"
-                      style={{ backgroundImage: gradientFromSeed(`${post.track.title}-${post.track.artist}`) }}
+                {isEditingPost ? (
+                  <form
+                    className="post-edit-form"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      void savePostEdit(post)
+                    }}
+                  >
+                    <textarea
+                      value={postEditDraft.text}
+                      onChange={(event) =>
+                        setPostEditDraft((current) => ({
+                          ...current,
+                          text: event.target.value,
+                        }))
+                      }
+                      placeholder="Atualize o texto do post"
                     />
-                    <div className="track-meta">
-                      <strong>{post.track.title}</strong>
-                      <span>{post.track.artist}</span>
+                    <div className="post-edit-moods">
+                      {moods.map((moodOption) => (
+                        <button
+                          key={`post-edit-mood-${post.id}-${moodOption}`}
+                          type="button"
+                          className={postEditDraft.mood === moodOption ? 'post-edit-mood active' : 'post-edit-mood'}
+                          onClick={() =>
+                            setPostEditDraft((current) => ({
+                              ...current,
+                              mood: moodOption,
+                            }))
+                          }
+                        >
+                          {moodOption}
+                        </button>
+                      ))}
                     </div>
-                    <button
-                      type="button"
-                      className={playingPostId === post.id ? 'play-chip active' : 'play-chip'}
-                      onClick={() => toggleVisualPlayer(post.id)}
-                    >
-                      {playingPostId === post.id ? 'Pausar visual' : 'Tocar visual'}
-                    </button>
-                  </div>
-                )}
+                    <div className="post-owner-actions">
+                      <button type="submit" className="primary-btn" disabled={savingPostEdit}>
+                        {savingPostEdit ? 'Salvando...' : 'Salvar'}
+                      </button>
+                      <button type="button" className="secondary-btn" onClick={cancelEditingPost} disabled={savingPostEdit}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <p className="post-text">{post.text}</p>
 
-                {post.spotify && (
-                  <div className="spotify-card">
-                    {post.spotify.embedUrl ? (
-                      <iframe
-                        src={post.spotify.embedUrl}
-                        title={`Spotify ${post.spotify.type} ${post.id}`}
-                        loading="lazy"
-                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                      />
-                    ) : (
-                      <p>Esse link nao gera embed direto, mas abre normalmente no Spotify.</p>
+                    {post.track && (
+                      <div className="track-preview">
+                        <div
+                          className="track-cover"
+                          aria-hidden="true"
+                          style={{ backgroundImage: gradientFromSeed(`${post.track.title}-${post.track.artist}`) }}
+                        />
+                        <div className="track-meta">
+                          <strong>{post.track.title}</strong>
+                          <span>{post.track.artist}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className={playingPostId === post.id ? 'play-chip active' : 'play-chip'}
+                          onClick={() => toggleVisualPlayer(post.id)}
+                        >
+                          {playingPostId === post.id ? 'Pausar visual' : 'Tocar visual'}
+                        </button>
+                      </div>
                     )}
-                    <a href={post.spotify.url} target="_blank" rel="noreferrer">
-                      Abrir no Spotify
-                    </a>
-                  </div>
-                )}
 
-                <div className={playingPostId === post.id ? 'waveform active' : 'waveform'} aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                </div>
-
-                {post.media && (
-                  <div className="media-card">
-                    {post.media.type === 'audio' ? (
-                      <audio controls src={post.media.url} preload="metadata" />
-                    ) : (
-                      <img src={post.media.url} alt={`Midia do post de ${post.user.name}`} loading="lazy" />
+                    {post.spotify && (
+                      <div className="spotify-card">
+                        {post.spotify.embedUrl ? (
+                          <iframe
+                            src={post.spotify.embedUrl}
+                            title={`Spotify ${post.spotify.type} ${post.id}`}
+                            loading="lazy"
+                            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                          />
+                        ) : (
+                          <p>Esse link nao gera embed direto, mas abre normalmente no Spotify.</p>
+                        )}
+                        <a href={post.spotify.url} target="_blank" rel="noreferrer">
+                          Abrir no Spotify
+                        </a>
+                      </div>
                     )}
-                  </div>
+
+                    <div className={playingPostId === post.id ? 'waveform active' : 'waveform'} aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+
+                    {post.media && (
+                      <div className="media-card">
+                        {post.media.type === 'audio' ? (
+                          <audio controls src={post.media.url} preload="metadata" />
+                        ) : (
+                          <img src={post.media.url} alt={`Midia do post de ${post.user.name}`} loading="lazy" />
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
 
                 <div className="action-row">
@@ -6829,7 +7600,7 @@ function App() {
                   </ul>
                 )}
               </article>
-            ))}
+            )})}
           </section>
           )}
         </main>
